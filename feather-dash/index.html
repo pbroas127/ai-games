@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Feather Dash</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="score">0</div>
+  <div id="coinPill"><span id="coinIcon"></span><span id="coinCount">0</span></div>
+  <button id="muteBtn" aria-label="Toggle sound">&#128266;</button>
+</div>
+
+<div id="title" class="overlay">
+  <div id="logo">FEATHER<span>DASH</span></div>
+  <div id="startHint">press &#8593; or tap to start</div>
+  <div id="bestLine"></div>
+  <div id="controlsHint">arrows / WASD to hop &middot; swipe on touch</div>
+</div>
+
+<div id="gameover" class="overlay hidden">
+  <div id="goCard">
+    <div id="goTitle">SPLAT!</div>
+    <div id="goScore">0</div>
+    <div class="goLabel">SCORE</div>
+    <div id="goBest">BEST 0</div>
+    <div id="newBest" class="hidden">&#9733; NEW BEST &#9733;</div>
+    <button id="playBtn"><span class="playTri"></span>PLAY</button>
+    <div class="goHint">or press space</div>
+  </div>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script src="three.min.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

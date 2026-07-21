@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Peter's AI Arcade</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    background: #0e1420;
+    color: #fff;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 48px 20px;
+  }
+  h1 {
+    font-family: 'Arial Black', 'Segoe UI', sans-serif;
+    font-size: clamp(34px, 7vw, 56px);
+    letter-spacing: 1px;
+  }
+  h1 span { color: #ffb524; }
+  .tag { margin-top: 10px; color: rgba(255,255,255,.55); font-size: 15px; }
+  .grid {
+    margin-top: 44px;
+    display: grid; gap: 22px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 320px));
+    justify-content: center;
+    width: 100%; max-width: 1100px;
+  }
+  a.card {
+    display: block; text-decoration: none; color: inherit;
+    background: #161e2e;
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 16px;
+    padding: 24px 22px;
+    transition: transform .12s ease, border-color .12s ease;
+  }
+  a.card:hover { transform: translateY(-4px); border-color: #ffb524; }
+  .emoji { font-size: 40px; }
+  .card h2 { margin-top: 12px; font-size: 22px; font-weight: 800; }
+  .card p { margin-top: 8px; color: rgba(255,255,255,.6); font-size: 14px; line-height: 1.5; }
+  .play { margin-top: 16px; display: inline-block; color: #ffb524; font-weight: 700; font-size: 14px; }
+  footer { margin-top: auto; padding-top: 60px; color: rgba(255,255,255,.35); font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>PETER'S <span>AI ARCADE</span></h1>
+  <div class="tag">Little games, built with AI. More coming.</div>
+  <div class="grid">
+    <a class="card" href="feather-dash/">
+      <div class="emoji">&#128020;</div>
+      <h2>Feather Dash</h2>
+      <p>A voxel road-crosser. Hop through traffic, ride the logs, respect the trains, and don't let the hawk catch you idling.</p>
+      <span class="play">Play &#8594;</span>
+    </a>
+  </div>
+  <footer>Built with Claude &middot; add a folder, add a card, push.</footer>
+</body>
+</html>
