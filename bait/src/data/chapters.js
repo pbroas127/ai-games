@@ -1027,6 +1027,45 @@
     return ch;
   }
 
+  /* addRooms is what the guest-author files call. It APPENDS and validates,
+   * where attach() demands a whole finished chapter in one go.
+   *
+   * Appending rather than replacing is deliberate: a chapter file that is only
+   * partly written must still boot. A half-authored chapter is a short
+   * campaign, which plannedTotal() and parComplete() both catch at verify
+   * time; a chapter file that THROWS at boot is a white screen and takes the
+   * whole game with it. Loud at build time, survivable at run time. */
+  function addRooms(n, rooms) {
+    var ch = null, i;
+    for (i = 0; i < CHAPTERS.length; i++) if (CHAPTERS[i].n === n) ch = CHAPTERS[i];
+    if (!ch) throw new Error('addRooms: no chapter ' + n);
+    if (!rooms || !rooms.length) throw new Error('addRooms: chapter ' + n + ' got no rooms');
+
+    var want = PLANNED[n - 1], have = ch.rooms.length;
+    if (have + rooms.length > want) {
+      throw new Error('addRooms: chapter ' + n + ' would hold ' +
+                      (have + rooms.length) + ' rooms, planned is ' + want);
+    }
+    for (i = 0; i < rooms.length; i++) {
+      var r = rooms[i], seq = have + i + 1;
+      var id = n + '-' + (seq < 10 ? '0' : '') + seq;
+      if (r.id !== id) {
+        throw new Error('addRooms: room ' + seq + ' of chapter ' + n +
+                        ' should have id ' + id + ', has ' + r.id);
+      }
+      if (!r.lines || r.lines.length !== 14) {
+        throw new Error('addRooms: ' + r.id + ' must have 14 grid lines');
+      }
+      if (r.par !== null && r.par !== undefined) {
+        throw new Error('addRooms: ' + r.id + ' must ship par null, the solver writes it');
+      }
+      r.params = r.params || {};
+      r.par = null;
+      ch.rooms.push(r);
+    }
+    return ch;
+  }
+
   BAIT.Chapters = {
     VERSION: 1,
     list: CHAPTERS,
@@ -1035,6 +1074,7 @@
     allRooms: allRooms,
     byId: byId,
     attach: attach,
+    addRooms: addRooms,
     applyPar: applyPar,
     parComplete: parComplete,
     R: R,

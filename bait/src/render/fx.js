@@ -140,10 +140,21 @@
     var dy = state && state.deathY !== undefined ? state.deathY / ONE + M.ROOM_Y
            : state ? state.y / ONE + M.ROOM_Y : M.CANVAS_H / 2;
 
+    /* Snap to the centre of the cell the death happened in — the callout
+     * names a PIECE, and a piece occupies a cell, not a point. */
+    var gx = Math.floor((dx - M.ROOM_X) / M.CELL);
+    var gy = Math.floor((dy - M.ROOM_Y) / M.CELL);
+    gx = Math.max(0, Math.min(K.GRID_W - 1, gx));
+    gy = Math.max(0, Math.min(K.GRID_H - 1, gy));
+
     death = {
       start: now,
       x: dx,
       y: dy,
+      /* cell centre in canvas space; the camera centres on x,y so these are
+       * offset from it by at most half a cell and stay on screen */
+      gcx: M.ROOM_X + gx * M.CELL + M.CELL / 2,
+      gcy: M.ROOM_Y + gy * M.CELL + M.CELL / 2,
       label: nameOfCause(cause),
       /* Reduced motion gets the information without the camera move: same
        * beat, same label, no push-in. SPEC §8. */
@@ -188,24 +199,42 @@
 
   /* The punchline. A leader line out to a stencilled name, drawn like an
    * annotation on the patent diagram it has been pretending to be. */
-  function drawCallout(ctx, d, alpha) {
+  /* THE RETICLE BELONGS TO THE ROOM, THE LABEL BELONGS TO THE LENS.
+   *
+   * The box frames the actual CELL that killed you, so it scales with the
+   * push-in and lands exactly on the piece. A fixed-size box floats inside a
+   * zoomed cell framing nothing, which is worse than no box at all — it reads
+   * as marking a point rather than naming a thing.
+   *
+   * The leader line and the stencilled name stay at screen size, because they
+   * are annotation on the drawing and have to stay legible at any scale.
+   */
+  function drawCallout(ctx, d, alpha, scale) {
     if (!d.label || alpha <= 0) return;
     var C = Theme.c;
+    scale = scale || 1;
+
+    /* the cell's half-extent on screen under the current camera */
+    var half = (M.CELL / 2) * scale;
     var lx = d.x, ly = d.y;
+
     /* Push the label to whichever side has room, so it never leaves the plate */
     var right = lx < M.CANVAS_W / 2;
-    var armX = right ? 46 : -46;
+    var arm = right ? half + 26 : -(half + 26);
 
     ctx.save();
     ctx.globalAlpha = alpha;
 
-    BAIT.Draw.box(ctx, lx - 22, ly - 22, 44, 44, C.chalk, M.LINE);
-    BAIT.Draw.line(ctx, lx + (right ? 22 : -22), ly, lx + armX, ly - 22, C.chalk, M.HAIR);
-    BAIT.Draw.line(ctx, lx + armX, ly - 22, lx + armX + (right ? 92 : -92), ly - 22,
+    /* Frame the cell, snapped to the cell the death happened in. */
+    BAIT.Draw.box(ctx, d.cx - half, d.cy - half, half * 2, half * 2, C.chalk, M.LINE);
+
+    var edge = right ? d.cx + half : d.cx - half;
+    BAIT.Draw.line(ctx, edge, d.cy, lx + arm, ly - half, C.chalk, M.HAIR);
+    BAIT.Draw.line(ctx, lx + arm, ly - half, lx + arm + (right ? 92 : -92), ly - half,
                    C.chalk, M.HAIR);
 
-    var tx = lx + armX + (right ? 6 : -6);
-    BAIT.Draw.stencil(ctx, d.label, tx, ly - 32, C.chalk, Theme.t.label,
+    var tx = lx + arm + (right ? 6 : -6);
+    BAIT.Draw.stencil(ctx, d.label, tx, ly - half - 10, C.chalk, Theme.t.label,
                       right ? 'left' : 'right');
     ctx.restore();
   }
@@ -314,7 +343,13 @@
      * not arrive early. The push-in is centred on the death point, so that
      * point sits exactly where it always was no matter the scale. */
     if (e >= SILENCE_MS + REPLAY_MS) {
-      drawCallout(ctx, { x: d.x, y: d.y, label: d.label }, 1);
+      /* The camera centres on the death point, so that point is fixed on
+       * screen; the cell centre moves out from it by the scale factor. */
+      drawCallout(ctx, {
+        x: d.x, y: d.y, label: d.label,
+        cx: (d.gcx - d.x) * scale + d.x,
+        cy: (d.gcy - d.y) * scale + d.y
+      }, 1, scale);
     }
     drawStamps(ctx);
   }

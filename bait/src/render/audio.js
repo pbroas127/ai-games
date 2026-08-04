@@ -92,7 +92,9 @@
    * if it is actually total. */
   function hush(ms) {
     if (!ctx) return;
-    hushUntil = ctx.currentTime + (ms || 500) / 1000;
+    /* `ms === undefined` rather than `ms ||` — hush(0) has to mean "clear the
+     * hush", not "hush for the default half second". */
+    hushUntil = ctx.currentTime + (ms === undefined ? 500 : ms) / 1000;
   }
 
   function blocked() {

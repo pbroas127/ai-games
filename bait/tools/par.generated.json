@@ -30,7 +30,7 @@
     "rung": "tight"
   },
   "1-07": {
-    "time": 844,
+    "time": 845,
     "deaths": 0,
     "rung": "tight"
   },
@@ -50,22 +50,22 @@
     "rung": "tight"
   },
   "1-11": {
-    "time": 818,
+    "time": 811,
     "deaths": 0,
     "rung": "tight"
   },
   "1-12": {
-    "time": 904,
+    "time": 916,
     "deaths": 0,
     "rung": "tight"
   },
   "1-13": {
-    "time": 970,
+    "time": 978,
     "deaths": 0,
     "rung": "tight"
   },
   "2-01": {
-    "time": 508,
+    "time": 501,
     "deaths": 0,
     "rung": "tight"
   },
@@ -80,12 +80,12 @@
     "rung": "tight"
   },
   "2-04": {
-    "time": 449,
+    "time": 499,
     "deaths": 0,
     "rung": "tight"
   },
   "2-05": {
-    "time": 396,
+    "time": 787,
     "deaths": 0,
     "rung": "tight"
   },
@@ -100,7 +100,7 @@
     "rung": "tight"
   },
   "2-08": {
-    "time": 371,
+    "time": 283,
     "deaths": 0,
     "rung": "tight"
   },
@@ -110,7 +110,7 @@
     "rung": "tight"
   },
   "2-10": {
-    "time": 482,
+    "time": 475,
     "deaths": 0,
     "rung": "tight"
   },
@@ -120,12 +120,12 @@
     "rung": "tight"
   },
   "2-12": {
-    "time": 494,
+    "time": 515,
     "deaths": 0,
     "rung": "tight"
   },
   "2-13": {
-    "time": 508,
+    "time": 502,
     "deaths": 0,
     "rung": "tight"
   }

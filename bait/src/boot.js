@@ -94,6 +94,8 @@
     mounted = 'editor';
     BAIT.Editor.mount(ui, {
       room: ctx && ctx.room,
+      entryId: ctx && ctx.entryId,
+      authorGhost: ctx && ctx.authorGhost,
       onExit: function () { BAIT.Modes.go('workshop'); },
       onTest: function (room) { BAIT.Play.begin(room, { origin: 'editor' }); },
       onPublish: function () { BAIT.Modes.go('workshop'); }
@@ -110,7 +112,17 @@
     unmountAll('workshop');
     mounted = 'workshop';
     BAIT.Workshop.mount(ui, {
-      onEdit: function (room) { BAIT.Modes.go('editor', { room: room }); },
+      /* Carry the library entry through. Without entryId the editor cannot
+       * tell "republish of an existing room" from "brand new room", so
+       * reopening a published room and republishing it silently created a
+       * SECOND library row instead of updating the first. */
+      onEdit: function (room, entry) {
+        BAIT.Modes.go('editor', {
+          room: room,
+          entryId: entry && entry.id,
+          authorGhost: entry && entry.ghost
+        });
+      },
       onPlay: function (room, entry) {
         BAIT.Play.begin(room, {
           origin: 'workshop', roomId: entry && entry.id,
@@ -180,6 +192,10 @@
      * user gesture, so Audio.init() is called on the first real input. */
     BAIT.Theme.install();
     BAIT.Save.load();
+    /* Stamp solver-computed par times onto the rooms. Without this every
+     * room's par is null and the Swift medal is unwinnable — the numbers are
+     * generated, never hand-typed, so they cannot drift from the sim. */
+    if (BAIT.Chapters.applyPar) BAIT.Chapters.applyPar();
     BAIT.Draw.init(canvas);
     BAIT.Input.init(window, canvas);
     /* Screens and Hud find #ui themselves and build lazily, so they need no
