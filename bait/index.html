@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BAIT — build a room that looks fair and isn't</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Build a small room that looks fair and is not. Prove it by clearing it yourself. Then watch strangers walk into it.">
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- The game world. Everything that moves is drawn here. OWNER: Ink -->
+<div id="stagewrap">
+  <canvas id="stage" width="1000" height="700" aria-label="Game"></canvas>
+</div>
+
+<!-- All menus, HUD chrome, the editor rail and dialogs are DOM, not canvas.
+     DOM gives us real typography, real focus rings, real keyboard navigation
+     and screen-reader output for free — all of which SPEC §8 requires and
+     canvas text cannot provide. OWNER: Frame (screens/hud), Chisel (editor). -->
+<div id="ui" aria-live="polite"></div>
+
+<!-- Boot order is the contract in SPEC.md §6. Classic scripts only: ES modules
+     are blocked by CORS on file:// and this game must run from a double-click
+     with the network cable pulled. -->
+
+<!-- core: deterministic, integer-only, and entirely free of DOM references so
+     tools/verify.cjs can load the same code under plain Node. -->
+<script src="src/core/fixed.js"></script>
+<script src="src/core/rng.js"></script>
+<script src="src/core/pieces.js"></script>
+<script src="src/core/room.js"></script>
+<script src="src/core/sim.js"></script>
+<script src="src/core/codec.js"></script>
+<script src="src/core/replay.js"></script>
+
+<!-- render -->
+<script src="src/render/theme.js"></script>
+<script src="src/render/draw.js"></script>
+<script src="src/render/fx.js"></script>
+<script src="src/render/audio.js"></script>
+
+<!-- game -->
+<script src="src/game/input.js"></script>
+<script src="src/game/loop.js"></script>
+<script src="src/game/save.js"></script>
+<script src="src/game/daily.js"></script>
+<script src="src/game/share.js"></script>
+<script src="src/game/modes.js"></script>
+<script src="src/game/play.js"></script>
+
+<!-- ui -->
+<script src="src/ui/screens.js"></script>
+<script src="src/ui/hud.js"></script>
+<script src="src/ui/editor.js"></script>
+<script src="src/ui/workshop.js"></script>
+
+<!-- content. chapters.js declares the six chapters, the design plan and the
+     R() authoring helper; each ch<N>.js registers its own rooms through
+     Chapters.addRooms so five authors can work at once without ever touching
+     the same file. -->
+<script src="src/data/chapters.js"></script>
+<!-- Chapters 2-6 ship as src/data/ch<N>.js and register through
+     Chapters.addRooms. Add their tags back as each file lands; a tag for a
+     file that does not exist is a 404 on Pages. -->
+
+
+<!-- wire-up -->
+<script src="src/boot.js"></script>
+
+</body>
+</html>

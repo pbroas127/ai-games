@@ -13,6 +13,8 @@ dependencies — every game is a self-contained folder you can open directly.
 | Game | Folder | What it is |
 | --- | --- | --- |
 | Feather Dash | [`feather-dash/`](feather-dash/) | Voxel endless road-crosser — cars, logs, trains, one determined chicken |
+| Off the Map | [`geo-sports-trivia/`](geo-sports-trivia/) | Sports trivia answered by clicking a world map — points scale with how close you got |
+| Bait | [`bait/`](bait/) | Build a room that looks fair and isn't, prove it by clearing it, share it as a code that *is* the room |
 
 ## Adding a game
 

@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Off the Map — sports trivia on a world map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+  :root {
+    --bg: #0d1017;
+    --panel: #161b26;
+    --panel-solid: #161b26;
+    --line: #263049;
+    --text: #e8edf7;
+    --dim: #8e9ab5;
+    --accent: #ff7a1a;
+    --good: #33d17a;
+    --mid: #ffc046;
+    --bad: #ff5470;
+    --radius: 14px;
+    --shadow: 0 18px 40px rgba(0,0,0,.55);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  .num { font-family: 'Arial Black', 'Segoe UI', Impact, sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
+
+  /* ---------- screens ---------- */
+  .screen { position: fixed; inset: 0; display: none; }
+  .screen.on { display: block; }
+
+  /* ---------- title ---------- */
+  #screen-title {
+    background: radial-gradient(1100px 620px at 50% -10%, #1b2436 0%, var(--bg) 62%);
+    overflow-y: auto;
+  }
+  .title-wrap {
+    min-height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 40px 22px;
+  }
+  .logo { font-family: 'Arial Black', 'Segoe UI', sans-serif; font-size: clamp(40px, 9vw, 82px); line-height: .95; letter-spacing: -1px; }
+  .logo em { font-style: normal; color: var(--accent); }
+  .kicker { margin-top: 14px; color: var(--dim); font-size: clamp(14px, 2.2vw, 17px); max-width: 520px; line-height: 1.55; }
+  .rules { margin-top: 26px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 620px; }
+  .rule { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 8px 15px; font-size: 13px; color: var(--dim); }
+  .rule b { color: var(--text); font-weight: 700; }
+  .btn {
+    background: var(--accent); color: #16100a; font-weight: 800;
+    padding: 15px 44px; border-radius: 999px; font-size: 18px;
+    box-shadow: 0 10px 26px rgba(255,122,26,.3);
+    transition: transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(255,122,26,.42); }
+  .btn:active { transform: translateY(0); }
+  .btn.ghost { background: var(--panel); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+  .btn[disabled] { opacity: .38; cursor: not-allowed; transform: none; box-shadow: none; }
+  #btn-play { margin-top: 34px; }
+  .best { margin-top: 20px; color: var(--dim); font-size: 14px; min-height: 20px; }
+  .best b { color: var(--accent); }
+
+  /* ---------- game ---------- */
+  #map { position: absolute; inset: 0; background: var(--bg); z-index: 1; }
+  .leaflet-container { background: var(--bg); outline: none; }
+  .leaflet-control-zoom a { background: var(--panel-solid); color: var(--text); border-color: var(--line); }
+  .leaflet-control-zoom a:hover { background: #202737; color: var(--accent); }
+  .leaflet-control-attribution { display: none; }
+
+  .topbar {
+    position: absolute; z-index: 500; top: 0; left: 0; right: 0;
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(13,16,23,.94) 0%, rgba(13,16,23,0) 100%);
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .pill {
+    background: var(--panel-solid); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 700;
+    display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+  }
+  .pill .dim { color: var(--dim); font-weight: 600; }
+  .chip-sport { color: var(--accent); }
+  .badge-w {
+    background: var(--accent); color: #16100a; border-radius: 8px;
+    padding: 3px 9px; font-weight: 900; font-size: 12px;
+  }
+  .badge-w.pulse { animation: pulseW 1.5s ease-in-out infinite; }
+  @keyframes pulseW { 0%,100% { transform: scale(1); } 50% { transform: scale(1.13); } }
+  .spacer { flex: 1; }
+  .total-pill .num { font-size: 17px; color: var(--accent); }
+
+  /* question card */
+  .qcard {
+    position: absolute; z-index: 500;
+    top: 62px; left: 50%; transform: translateX(-50%);
+    width: min(620px, calc(100vw - 28px));
+    background: var(--panel-solid);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .qcard-head { display: flex; align-items: center; gap: 10px; padding: 13px 15px; }
+  .qcard-head .q { flex: 1; font-size: 16px; line-height: 1.45; font-weight: 600; }
+  .qcard.collapsed .q { display: none; }
+  .qcard.collapsed .qcard-head::before {
+    content: 'Question hidden'; flex: 1; color: var(--dim); font-size: 13px;
+  }
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 9px; flex: none;
+    background: #1e2635; color: var(--dim); font-size: 13px; line-height: 30px; text-align: center;
+    transition: color .12s ease, background .12s ease;
+  }
+  .icon-btn:hover { color: var(--text); background: #263043; }
+
+  /* lock-in */
+  .lockbar {
+    position: absolute; z-index: 500; bottom: 22px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 9px;
+  }
+  .hint { color: var(--dim); font-size: 12.5px; background: rgba(13,16,23,.82); padding: 4px 12px; border-radius: 999px; }
+
+  /* pins */
+  .pin { width: 26px; height: 26px; position: relative; }
+  .pin i {
+    display: block; width: 16px; height: 16px; margin: 5px;
+    border-radius: 50% 50% 50% 2px; transform: rotate(45deg);
+    border: 2px solid #fff;
+  }
+  .pin-guess i { background: var(--accent); box-shadow: 0 3px 10px rgba(0,0,0,.6); }
+  .pin-answer i { background: var(--good); box-shadow: 0 3px 10px rgba(0,0,0,.6); }
+  .pin-drop { animation: pinDrop .52s cubic-bezier(.24,1.5,.42,1) both; }
+  @keyframes pinDrop {
+    0% { transform: translateY(-38px) scale(.7); opacity: 0; }
+    60% { transform: translateY(3px) scale(1.06); opacity: 1; }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  .pin-pop { animation: pinPop .42s cubic-bezier(.2,1.6,.4,1) both; }
+  @keyframes pinPop { 0% { transform: scale(0); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  .ring {
+    position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px;
+    border: 2px solid var(--good); border-radius: 50%; opacity: 0;
+  }
+  .ring.go { animation: ringOut 1.25s ease-out forwards; }
+  .ring.r2.go { animation-delay: .22s; }
+  @keyframes ringOut {
+    0% { transform: scale(.4); opacity: .85; }
+    100% { transform: scale(5.2); opacity: 0; }
+  }
+  /* Leaflet owns the marker element's inline transform for positioning, so the
+     label offset has to live on an inner element or it gets overwritten. */
+  .lbl-city { pointer-events: none; }
+  .lbl-city b {
+    position: absolute; left: 8px; top: -7px;
+    color: rgba(232,237,247,.72); font-size: 10.5px; font-weight: 600;
+    white-space: nowrap; text-shadow: 0 1px 3px #000, 0 0 6px #000;
+  }
+  .lbl-city.r2 b { color: rgba(232,237,247,.5); font-size: 10px; }
+
+  /* reveal card */
+  .reveal {
+    position: absolute; z-index: 600; left: 50%; bottom: 22px; transform: translateX(-50%);
+    width: min(560px, calc(100vw - 28px));
+    background: var(--panel-solid); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 16px 18px 15px;
+    display: none;
+  }
+  .reveal.on { display: block; animation: slideUp .3s ease both; }
+  @keyframes slideUp { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  .reveal-top { display: flex; align-items: flex-start; gap: 14px; }
+  .reveal-where { flex: 1; min-width: 0; }
+  .reveal-where .name { font-size: 17px; font-weight: 800; }
+  .reveal-where .dist { margin-top: 5px; color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .reveal-pts { text-align: right; flex: none; position: relative; }
+  .reveal-pts .n { font-size: 40px; line-height: 1; }
+  .reveal-pts .of { color: var(--dim); font-size: 11px; margin-top: 3px; }
+  .stamp {
+    position: absolute; right: -6px; top: -16px;
+    background: var(--accent); color: #16100a; font-weight: 900; font-size: 13px;
+    padding: 3px 9px; border-radius: 8px; transform: rotate(-9deg) scale(0); opacity: 0;
+  }
+  .stamp.hit { animation: stampIn .34s cubic-bezier(.2,1.8,.4,1) forwards; }
+  @keyframes stampIn {
+    0% { transform: rotate(-9deg) scale(2.1); opacity: 0; }
+    100% { transform: rotate(-9deg) scale(1); opacity: 1; }
+  }
+  .bullseye {
+    display: none; margin-top: 11px;
+    background: rgba(51,209,122,.13); border: 1px solid rgba(51,209,122,.4); color: var(--good);
+    border-radius: 9px; padding: 6px 11px; font-weight: 900; font-size: 12.5px; letter-spacing: 1.4px;
+  }
+  .bullseye.on { display: inline-block; animation: stampIn .34s cubic-bezier(.2,1.8,.4,1) both; }
+  .fact { margin-top: 11px; color: var(--dim); font-size: 13.5px; line-height: 1.5; opacity: 0; transition: opacity .45s ease; }
+  .fact.on { opacity: 1; }
+  .reveal-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+  .reveal-actions .btn { padding: 11px 26px; font-size: 15px; }
+
+  /* ---------- final ---------- */
+  #screen-final { background: radial-gradient(1100px 620px at 50% -10%, #1b2436 0%, var(--bg) 62%); overflow-y: auto; }
+  .final-wrap { min-height: 100%; display: flex; flex-direction: column; align-items: center; padding: 34px 20px 46px; }
+  .final-total { font-size: clamp(62px, 15vw, 116px); line-height: 1; color: var(--accent); }
+  .final-outof { color: var(--dim); font-size: 15px; margin-top: 2px; }
+  .final-rank { margin-top: 16px; font-size: clamp(24px, 5vw, 34px); font-weight: 900; letter-spacing: -.5px; }
+  .final-sub { margin-top: 8px; color: var(--dim); font-size: 14px; }
+  .final-panel {
+    margin-top: 26px; width: min(680px, 100%);
+    background: var(--panel-solid); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+  }
+  .final-panel h3 { font-size: 12px; letter-spacing: 1.4px; color: var(--dim); text-transform: uppercase; margin-bottom: 13px; }
+  .bars { display: flex; align-items: flex-end; gap: 8px; height: 120px; }
+  .bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; gap: 6px; }
+  .bar .fill { width: 100%; border-radius: 6px 6px 2px 2px; min-height: 3px; transition: height .6s cubic-bezier(.2,.8,.3,1); height: 0; }
+  .bar .cap { font-size: 10.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .bar .w { font-size: 9.5px; color: var(--accent); font-weight: 800; height: 12px; }
+  #minimap { height: 260px; border-radius: 11px; overflow: hidden; background: var(--bg); border: 1px solid var(--line); }
+  .final-list { margin-top: 14px; display: flex; flex-direction: column; gap: 7px; }
+  .fl-row { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+  .fl-row .fl-n { color: var(--dim); width: 20px; flex: none; font-variant-numeric: tabular-nums; }
+  .fl-row .fl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fl-row .fl-km { color: var(--dim); font-variant-numeric: tabular-nums; flex: none; }
+  .fl-row .fl-p { font-weight: 800; width: 46px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+  .final-actions { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+  #confetti { position: fixed; inset: 0; z-index: 900; pointer-events: none; display: none; }
+  #fatal {
+    position: fixed; inset: 0; z-index: 9999; display: none;
+    background: #12060a; color: #ffb4c1; padding: 34px; font-family: Consolas, monospace; font-size: 14px; line-height: 1.7;
+  }
+  #fatal.on { display: block; }
+
+  @media (max-width: 560px) {
+    .qcard {
+      top: auto; bottom: 0; left: 0; right: 0; transform: none;
+      width: 100%; border-radius: var(--radius) var(--radius) 0 0; border-bottom: 0;
+    }
+    .lockbar { bottom: auto; top: 58px; }
+    .reveal { bottom: 0; left: 0; right: 0; width: 100%; transform: none; border-radius: var(--radius) var(--radius) 0 0; }
+    .reveal.on { animation: none; }
+    .topbar { flex-wrap: wrap; }
+    .bars { height: 90px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; animation-delay: 0ms !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ TITLE ============ -->
+<section id="screen-title" class="screen on">
+  <div class="title-wrap">
+    <h1 class="logo">OFF THE<br><em>MAP</em></h1>
+    <p class="kicker">Sports trivia where every answer is a place. Read the question, click the spot on the world map. The closer you are, the more you score.</p>
+    <div class="rules">
+      <span class="rule"><b>0-100</b> points a round</span>
+      <span class="rule">Late rounds are worth <b>x2</b> and <b>x3</b></span>
+      <span class="rule">A perfect game is <b>1000</b></span>
+    </div>
+    <button id="btn-play" class="btn">Play</button>
+    <div class="best" id="best-line"></div>
+  </div>
+</section>
+
+<!-- ============ GAME ============ -->
+<section id="screen-game" class="screen">
+  <div id="map"></div>
+
+  <div class="topbar">
+    <span class="pill"><span class="dim">Round</span> <span id="hud-round">1 of 8</span></span>
+    <span class="pill chip-sport" id="hud-sport">NFL</span>
+    <span class="badge-w" id="hud-weight" style="display:none">x2</span>
+    <span class="spacer"></span>
+    <span class="pill total-pill"><span class="dim">Score</span> <span class="num" id="hud-total">0</span></span>
+  </div>
+
+  <div class="qcard" id="qcard">
+    <div class="qcard-head">
+      <p class="q" id="hud-question"></p>
+      <button class="icon-btn" id="btn-collapse" title="Hide the question (Esc)">&#9650;</button>
+    </div>
+  </div>
+
+  <div class="lockbar" id="lockbar">
+    <button class="btn" id="btn-lock" disabled>Lock it in</button>
+    <span class="hint" id="lock-hint">Click the map to drop your pin</span>
+  </div>
+
+  <div class="reveal" id="reveal">
+    <div class="reveal-top">
+      <div class="reveal-where">
+        <div class="name" id="rv-name"></div>
+        <div class="dist" id="rv-dist"></div>
+      </div>
+      <div class="reveal-pts">
+        <div class="num n" id="rv-pts">0</div>
+        <div class="of" id="rv-of"></div>
+        <div class="stamp" id="rv-stamp">x2</div>
+      </div>
+    </div>
+    <div class="bullseye" id="rv-bullseye">BULLSEYE</div>
+    <p class="fact" id="rv-fact"></p>
+    <div class="reveal-actions">
+      <button class="btn" id="btn-next">Next</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL ============ -->
+<section id="screen-final" class="screen">
+  <div class="final-wrap">
+    <div class="num final-total" id="fn-total">0</div>
+    <div class="final-outof">out of 1000</div>
+    <div class="final-rank" id="fn-rank"></div>
+    <div class="final-sub" id="fn-sub"></div>
+
+    <div class="final-panel">
+      <h3>Round by round</h3>
+      <div class="bars" id="fn-bars"></div>
+      <div class="final-list" id="fn-list"></div>
+    </div>
+
+    <div class="final-panel">
+      <h3>Where they were</h3>
+      <div id="minimap"></div>
+    </div>
+
+    <div class="final-actions">
+      <button class="btn" id="btn-again">Play again</button>
+      <button class="btn ghost" id="btn-home">Title screen</button>
+    </div>
+  </div>
+</section>
+
+<canvas id="confetti"></canvas>
+<div id="fatal"></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="data/countries.js"></script>
+<script src="data/cities.js"></script>
+<script src="data/questions.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ===================== PURE LOGIC START =====================
+  // Everything between these markers is free of DOM and Leaflet so it can be
+  // lifted out and run headless by the verification script. Do not reach for
+  // document, window or L in here.
+
+  var EARTH_R_KM = 6371;
+
+  function toRad(d) { return d * Math.PI / 180; }
+  function toDeg(r) { return r * 180 / Math.PI; }
+
+  function haversine(aLat, aLon, bLat, bLon) {
+    var dLat = toRad(bLat - aLat);
+    var dLon = toRad(bLon - aLon);
+    var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * EARTH_R_KM * Math.asin(Math.min(1, Math.sqrt(s)));
+  }
+
+  // 0-100 for one round, before the weight is applied.
+  function baseScore(distKm, perfectKm) {
+    if (distKm <= perfectKm) return 100;
+    var raw = 100 * Math.exp(-(distKm - perfectKm) / 1400);
+    return raw < 1 ? 0 : Math.round(raw);
+  }
+
+  // Heavy rounds last, always. Every pattern sums to 10, which is the only
+  // reason "a perfect game is 1000" is a true statement.
+  var WEIGHT_PATTERNS = [
+    [1, 1, 1, 1, 1, 1, 2, 2],
+    [1, 1, 1, 1, 2, 2, 2],
+    [1, 1, 1, 1, 1, 2, 3],
+    [1, 1, 2, 2, 2, 2]
+  ];
+
+  function sum(list) { return list.reduce(function (a, b) { return a + b; }, 0); }
+
+  function assertWeightPatterns(patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      var p = patterns[i];
+      if (sum(p) !== 10) {
+        throw new Error('weight pattern ' + i + ' sums to ' + sum(p) + ', not 10 — the 1000 cap would be a lie');
+      }
+      for (var j = 1; j < p.length; j++) {
+        if (p[j] < p[j - 1]) throw new Error('weight pattern ' + i + ' is not sorted light to heavy');
+      }
+    }
+    return true;
+  }
+
+  function shuffle(list, rng) {
+    var a = list.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(rng() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  // Two answers within this range are treated as the same place, so a run never
+  // asks for Lord's and then for London.
+  var SAME_CITY_KM = 75;
+  var MAX_PER_SPORT = 2;
+
+  function tooClose(q, chosen) {
+    for (var i = 0; i < chosen.length; i++) {
+      if (haversine(q.answer.lat, q.answer.lon, chosen[i].answer.lat, chosen[i].answer.lon) < SAME_CITY_KM) return true;
+    }
+    return false;
+  }
+
+  // Shuffle, drop duplicate places and over-represented sports, take n, then sort
+  // easy to hard so the x2/x3 rounds are also the hard ones.
+  function pickQuestions(bank, n, rng) {
+    var pool = shuffle(bank, rng);
+    var chosen = [];
+    var sportCount = {};
+
+    function pass(capSport, capPlace) {
+      for (var i = 0; i < pool.length && chosen.length < n; i++) {
+        var q = pool[i];
+        if (chosen.indexOf(q) !== -1) continue;
+        if (capPlace && tooClose(q, chosen)) continue;
+        if (capSport && (sportCount[q.sport] || 0) >= MAX_PER_SPORT) continue;
+        chosen.push(q);
+        sportCount[q.sport] = (sportCount[q.sport] || 0) + 1;
+      }
+    }
+
+    pass(true, true);      // the rules as intended
+    pass(false, true);     // a thin bank may force a third question from one sport
+    pass(false, false);    // ...but never a duplicate place unless there is no choice
+
+    if (chosen.length < n) {
+      throw new Error('question bank cannot fill ' + n + ' rounds (only ' + chosen.length + ' usable)');
+    }
+    return chosen.sort(function (a, b) { return a.difficulty - b.difficulty; });
+  }
+
+  function buildGame(bank, rng) {
+    assertWeightPatterns(WEIGHT_PATTERNS);
+    var weights = WEIGHT_PATTERNS[Math.floor(rng() * WEIGHT_PATTERNS.length)];
+    if (sum(weights) !== 10) throw new Error('chosen weight pattern does not sum to 10');
+    var picked = pickQuestions(bank, weights.length, rng);
+    return picked.map(function (q, i) {
+      return { q: q, weight: weights[i], guess: null, distKm: 0, base: 0, points: 0 };
+    });
+  }
+
+  function rankFor(total) {
+    if (total >= 950) return 'Hall of Famer';
+    if (total >= 850) return 'MVP';
+    if (total >= 700) return 'All-Star';
+    if (total >= 500) return 'Starter';
+    if (total >= 250) return 'Rotation Player';
+    return 'Benchwarmer';
+  }
+
+  function normLon(lon) {
+    var x = (lon + 180) % 360;
+    if (x < 0) x += 360;
+    return x - 180;
+  }
+
+  // Great-circle points from a to b, with longitudes left UNWRAPPED so the path
+  // is continuous even when it runs past the antimeridian.
+  function greatCirclePoints(a, b, steps) {
+    var lat1 = toRad(a.lat), lon1 = toRad(a.lon), lat2 = toRad(b.lat), lon2 = toRad(b.lon);
+    var d = 2 * Math.asin(Math.min(1, Math.sqrt(
+      Math.pow(Math.sin((lat2 - lat1) / 2), 2) +
+      Math.cos(lat1) * Math.cos(lat2) * Math.pow(Math.sin((lon2 - lon1) / 2), 2)
+    )));
+    var pts = [];
+    if (d === 0) return [[a.lat, a.lon], [b.lat, b.lon]];
+
+    for (var i = 0; i <= steps; i++) {
+      var f = i / steps;
+      var A = Math.sin((1 - f) * d) / Math.sin(d);
+      var B = Math.sin(f * d) / Math.sin(d);
+      var x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
+      var y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
+      var z = A * Math.sin(lat1) + B * Math.sin(lat2);
+      pts.push([toDeg(Math.atan2(z, Math.sqrt(x * x + y * y))), toDeg(Math.atan2(y, x))]);
+    }
+
+    // unwrap: keep each step within 180 degrees of the one before it
+    for (var k = 1; k < pts.length; k++) {
+      while (pts[k][1] - pts[k - 1][1] > 180) pts[k][1] -= 360;
+      while (pts[k][1] - pts[k - 1][1] < -180) pts[k][1] += 360;
+    }
+    return pts;
+  }
+
+  // Cut the unwrapped path wherever it crosses the antimeridian and wrap each
+  // piece back into [-180, 180]. Drawing one straight polyline instead is what
+  // gives you the line that wraps the wrong way round the world.
+  function greatCircleSegments(a, b, steps) {
+    var pts = greatCirclePoints(a, b, steps || 32);
+    var segs = [];
+    var cur = [[pts[0][0], normLon(pts[0][1])]];
+
+    for (var i = 1; i < pts.length; i++) {
+      var p0 = pts[i - 1], p1 = pts[i];
+      var k0 = Math.floor((p0[1] + 180) / 360);
+      var k1 = Math.floor((p1[1] + 180) / 360);
+
+      if (k0 !== k1) {
+        var east = p1[1] > p0[1];
+        var edge = (east ? k1 : k0) * 360 - 180;   // the meridian actually crossed
+        var t = (edge - p0[1]) / (p1[1] - p0[1]);
+        var lat = p0[0] + t * (p1[0] - p0[0]);
+        cur.push([lat, east ? 180 : -180]);
+        segs.push(cur);
+        cur = [[lat, east ? -180 : 180], [p1[0], normLon(p1[1])]];
+      } else {
+        cur.push([p1[0], normLon(p1[1])]);
+      }
+    }
+    segs.push(cur);
+    return segs.filter(function (s) { return s.length > 1; });
+  }
+
+  var PURE = {
+    haversine: haversine,
+    baseScore: baseScore,
+    WEIGHT_PATTERNS: WEIGHT_PATTERNS,
+    assertWeightPatterns: assertWeightPatterns,
+    pickQuestions: pickQuestions,
+    buildGame: buildGame,
+    rankFor: rankFor,
+    greatCircleSegments: greatCircleSegments,
+    normLon: normLon,
+    SAME_CITY_KM: SAME_CITY_KM,
+    MAX_PER_SPORT: MAX_PER_SPORT
+  };
+  // ====================== PURE LOGIC END ======================
+
+  // ------------------------------------------------------------------
+  // From here down: the browser game.
+  // ------------------------------------------------------------------
+
+  var $ = function (id) { return document.getElementById(id); };
+  var REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var BEST_KEY = 'offthemap.best';
+
+  function fatal(err) {
+    var el = $('fatal');
+    el.className = 'on';
+    el.textContent = 'Off the Map could not start.\n\n' + (err && err.stack ? err.stack : String(err));
+    throw err;
+  }
+
+  // The assertion the whole scoring promise rests on. Loud, and at startup.
+  try {
+    assertWeightPatterns(WEIGHT_PATTERNS);
+  } catch (e) {
+    fatal(e);
+  }
+
+  var state = {
+    rounds: [],
+    idx: 0,
+    total: 0,
+    guessLatLng: null,
+    phase: 'guess',
+    startedAt: 0,
+    timers: []
+  };
+
+  // Some browsers refuse storage on file:// origins. A blocked best score is not
+  // a reason for the results screen to blow up.
+  function readBest() {
+    try { return parseInt(localStorage.getItem(BEST_KEY) || '0', 10) || 0; } catch (e) { return 0; }
+  }
+  function writeBest(n) {
+    try { localStorage.setItem(BEST_KEY, String(n)); } catch (e) { /* no storage, no best score */ }
+  }
+
+  function later(fn, ms) { var t = setTimeout(fn, REDUCED ? 0 : ms); state.timers.push(t); return t; }
+  function clearTimers() { state.timers.forEach(clearTimeout); state.timers = []; }
+
+  function showScreen(id) {
+    ['screen-title', 'screen-game', 'screen-final'].forEach(function (s) {
+      $(s).className = 'screen' + (s === id ? ' on' : '');
+    });
+  }
+
+  // ---------------- map ----------------
+  var map = null, guessMarker = null, answerMarker = null, lineLayers = [];
+  var labelR1 = null, labelR2 = null;
+  var svgRenderer = null;
+
+  function styleWorld() {
+    return { color: '#39445c', weight: 0.7, fillColor: '#1c2230', fillOpacity: 1, interactive: false };
+  }
+
+  function graticuleLayer() {
+    var lines = [];
+    for (var lat = -60; lat <= 60; lat += 30) {
+      var row = [];
+      for (var lo = -180; lo <= 180; lo += 10) row.push([lat, lo]);
+      lines.push(row);
+    }
+    for (var lon = -180; lon <= 180; lon += 30) lines.push([[-85, lon], [85, lon]]);
+    return L.polyline(lines, { color: '#39445c', weight: 0.5, opacity: 0.22, interactive: false });
+  }
+
+  function cityDots(target, withLabels) {
+    var dots = L.layerGroup();
+    var r1 = L.layerGroup(), r2 = L.layerGroup();
+
+    CITIES.forEach(function (c) {
+      L.circleMarker([c.lat, c.lon], {
+        radius: c.rank === 1 ? 2.4 : 1.7,
+        color: '#7d8aa8', weight: 0, fillColor: '#8d99b6',
+        fillOpacity: c.rank === 1 ? 0.85 : 0.6, interactive: false
+      }).addTo(dots);
+
+      if (!withLabels) return;
+      var m = L.marker([c.lat, c.lon], {
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({
+          className: 'lbl-city' + (c.rank === 2 ? ' r2' : ''),
+          html: '<b>' + c.name + '</b>',
+          iconSize: null
+        })
+      });
+      (c.rank === 1 ? r1 : r2).addLayer(m);
+    });
+
+    dots.addTo(target);
+    return { r1: r1, r2: r2 };
+  }
+
+  function syncLabels() {
+    var z = map.getZoom();
+    if (z >= 4) { if (!map.hasLayer(labelR1)) labelR1.addTo(map); }
+    else if (map.hasLayer(labelR1)) map.removeLayer(labelR1);
+
+    if (z >= 5) { if (!map.hasLayer(labelR2)) labelR2.addTo(map); }
+    else if (map.hasLayer(labelR2)) map.removeLayer(labelR2);
+  }
+
+  function buildMap() {
+    map = L.map('map', {
+      preferCanvas: true,          // country polygons on canvas, not 177 SVG paths
+      worldCopyJump: true,
+      minZoom: 2,
+      maxZoom: 10,
+      zoomControl: false,
+      doubleClickZoom: false,      // it fights click-to-guess
+      attributionControl: false,
+      maxBounds: L.latLngBounds(L.latLng(-85, -1080), L.latLng(85, 1080)),
+      maxBoundsViscosity: 1
+    }).setView([22, 8], 2);
+
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    svgRenderer = L.svg().addTo(map);   // the reveal line needs a real SVG path to animate
+
+    L.geoJSON(WORLD_GEOJSON, { style: styleWorld }).addTo(map);
+    graticuleLayer().addTo(map);
+
+    var labels = cityDots(map, true);
+    labelR1 = labels.r1;
+    labelR2 = labels.r2;
+    map.on('zoomend', syncLabels);
+    syncLabels();
+
+    map.on('click', function (e) {
+      if (state.phase !== 'guess') return;
+      placeGuess(e.latlng);
+    });
+  }
+
+  function pinIcon(kind, extraClass) {
+    var rings = kind === 'answer' ? '<span class="ring r1"></span><span class="ring r2"></span>' : '';
+    return L.divIcon({
+      className: '',
+      html: '<div class="pin pin-' + kind + ' ' + (extraClass || '') + '">' + rings + '<i></i></div>',
+      iconSize: [26, 26],
+      iconAnchor: [13, 24]
+    });
+  }
+
+  function placeGuess(latlng) {
+    state.guessLatLng = latlng;
+    if (guessMarker) map.removeLayer(guessMarker);
+    guessMarker = L.marker(latlng, { icon: pinIcon('guess', 'pin-drop'), interactive: false, keyboard: false }).addTo(map);
+    $('btn-lock').disabled = false;
+    $('lock-hint').textContent = 'Press Enter or hit Lock it in';
+  }
+
+  function clearRoundLayers() {
+    if (guessMarker) { map.removeLayer(guessMarker); guessMarker = null; }
+    if (answerMarker) { map.removeLayer(answerMarker); answerMarker = null; }
+    lineLayers.forEach(function (l) { map.removeLayer(l); });
+    lineLayers = [];
+  }
+
+  // ---------------- round flow ----------------
+  function startGame() {
+    clearTimers();
+    state.rounds = buildGame(QUESTIONS, Math.random);
+    state.idx = 0;
+    state.total = 0;
+    state.startedAt = Date.now();
+    showScreen('screen-game');
+    if (!map) buildMap();
+    map.invalidateSize();
+    loadRound();
+  }
+
+  function loadRound() {
+    clearTimers();
+    clearRoundLayers();
+    state.guessLatLng = null;
+    state.phase = 'guess';
+
+    var r = state.rounds[state.idx];
+    $('hud-round').textContent = (state.idx + 1) + ' of ' + state.rounds.length;
+    $('hud-sport').textContent = r.q.sport;
+    $('hud-question').textContent = r.q.prompt;
+    $('hud-total').textContent = state.total;
+
+    var w = $('hud-weight');
+    if (r.weight > 1) {
+      w.style.display = '';
+      w.textContent = 'x' + r.weight;
+      w.className = 'badge-w pulse';
+    } else {
+      w.style.display = 'none';
+    }
+
+    $('qcard').className = 'qcard';
+    $('reveal').className = 'reveal';
+    $('lockbar').style.display = '';
+    $('btn-lock').disabled = true;
+    $('lock-hint').textContent = 'Click the map to drop your pin';
+    $('btn-next').textContent = state.idx === state.rounds.length - 1 ? 'See results' : 'Next';
+
+    map.setView([22, 8], 2, { animate: false });
+  }
+
+  function countUp(el, to, ms, done) {
+    if (REDUCED || ms <= 0) { el.textContent = to; if (done) done(); return; }
+    var from = parseInt(el.textContent, 10) || 0;
+    var t0 = performance.now();
+    (function step(now) {
+      var p = Math.min(1, (now - t0) / ms);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(from + (to - from) * eased);
+      if (p < 1) requestAnimationFrame(step);
+      else if (done) done();
+    })(t0);
+  }
+
+  function pointsColour(base) {
+    return base >= 80 ? 'var(--good)' : base >= 40 ? 'var(--mid)' : 'var(--bad)';
+  }
+
+  function lockIn() {
+    if (state.phase !== 'guess' || !state.guessLatLng) return;
+    state.phase = 'reveal';
+
+    var r = state.rounds[state.idx];
+    var g = { lat: state.guessLatLng.lat, lon: normLon(state.guessLatLng.lng) };
+    var a = { lat: r.q.answer.lat, lon: r.q.answer.lon };
+
+    r.guess = g;
+    r.distKm = haversine(g.lat, g.lon, a.lat, a.lon);
+    r.base = baseScore(r.distKm, r.q.perfectKm);
+    r.points = r.base * r.weight;
+
+    $('lockbar').style.display = 'none';
+    $('qcard').className = 'qcard collapsed';
+
+    // 1 + 2. fly out to show both, generous padding
+    var bounds = L.latLngBounds([g.lat, g.lon], [a.lat, a.lon]).pad(0.35);
+    if (REDUCED) map.fitBounds(bounds, { padding: [70, 90], maxZoom: 7, animate: false });
+    else map.flyToBounds(bounds, { padding: [70, 90], duration: 0.8, maxZoom: 7 });
+
+    // 3. answer pin pops in
+    later(function () {
+      answerMarker = L.marker([a.lat, a.lon], {
+        icon: pinIcon('answer', 'pin-pop'), interactive: false, keyboard: false
+      }).addTo(map);
+      var el = answerMarker.getElement();
+      if (el) {
+        var rings = el.querySelectorAll('.ring');
+        for (var i = 0; i < rings.length; i++) rings[i].className += ' go';
+      }
+    }, 620);
+
+    // 4. line grows from guess to answer, cut at the antimeridian
+    later(function () { drawLine(g, a); }, 760);
+
+    // 5 + 6. distance and points
+    later(function () { showNumbers(r); }, 1050);
+  }
+
+  function drawLine(g, a) {
+    var segs = greatCircleSegments(g, a, 48);
+    segs.forEach(function (seg) {
+      var line = L.polyline(seg, {
+        renderer: svgRenderer,
+        color: '#ff7a1a', weight: 2.5, opacity: 0.95,
+        dashArray: null, interactive: false
+      }).addTo(map);
+      lineLayers.push(line);
+
+      var path = line.getElement && line.getElement();
+      if (!path || REDUCED) return;
+      var len = 0;
+      try { len = path.getTotalLength(); } catch (e) { return; }
+      path.style.strokeDasharray = len;
+      path.style.strokeDashoffset = len;
+      path.getBoundingClientRect();      // force layout so the transition takes
+      path.style.transition = 'stroke-dashoffset .62s ease-out';
+      path.style.strokeDashoffset = '0';
+    });
+  }
+
+  function showNumbers(r) {
+    var km = Math.round(r.distKm);
+    var mi = Math.round(r.distKm * 0.621371);
+
+    $('rv-name').textContent = r.q.answer.name;
+    $('rv-of').textContent = r.weight > 1 ? ('max ' + (100 * r.weight)) : 'max 100';
+    $('rv-pts').style.color = pointsColour(r.base);
+    $('rv-pts').textContent = '0';
+    $('rv-stamp').className = 'stamp';
+    $('rv-bullseye').className = 'bullseye';
+    $('rv-fact').className = 'fact';
+    $('rv-fact').textContent = r.q.fact || '';
+    $('reveal').className = 'reveal on';
+
+    var distEl = $('rv-dist');
+    distEl.textContent = '0 km away';
+    if (REDUCED) {
+      distEl.textContent = km.toLocaleString() + ' km / ' + mi.toLocaleString() + ' mi away';
+    } else {
+      var t0 = performance.now();
+      (function step(now) {
+        var p = Math.min(1, (now - t0) / 620);
+        var e = 1 - Math.pow(1 - p, 3);
+        distEl.textContent = Math.round(km * e).toLocaleString() + ' km / ' +
+                             Math.round(mi * e).toLocaleString() + ' mi away';
+        if (p < 1) requestAnimationFrame(step);
+      })(t0);
+    }
+
+    // base lands first, then the multiplier stamp hits and the number climbs
+    countUp($('rv-pts'), r.base, 620, function () {
+      if (r.weight > 1) {
+        later(function () {
+          var s = $('rv-stamp');
+          s.textContent = 'x' + r.weight;
+          s.className = 'stamp hit';
+          countUp($('rv-pts'), r.points, 480);
+        }, 260);
+      }
+    });
+
+    if (r.distKm <= r.q.perfectKm) {
+      later(function () {
+        $('rv-bullseye').className = 'bullseye on';
+        if (!REDUCED) confettiBurst();
+      }, 520);
+    }
+
+    later(function () { $('rv-fact').className = 'fact on'; }, 900);
+
+    state.total += r.points;
+    later(function () { $('hud-total').textContent = state.total; }, 1200);
+  }
+
+  function nextRound() {
+    if (state.phase !== 'reveal') return;
+    clearTimers();
+    $('hud-total').textContent = state.total;
+    if (state.idx >= state.rounds.length - 1) return finish();
+    state.idx++;
+    loadRound();
+  }
+
+  // ---------------- final ----------------
+  var miniMap = null;
+
+  function finish() {
+    state.phase = 'done';
+    showScreen('screen-final');
+
+    var secs = Math.max(1, Math.round((Date.now() - state.startedAt) / 1000));
+    var mm = Math.floor(secs / 60), ss = secs % 60;
+
+    $('fn-rank').textContent = rankFor(state.total);
+    $('fn-sub').textContent = 'Finished in ' + mm + ':' + (ss < 10 ? '0' : '') + ss +
+      ' · ' + state.rounds.length + ' rounds';
+
+    if (state.total > readBest()) {
+      writeBest(state.total);
+      $('fn-sub').textContent += ' · new best';
+    }
+    paintBest();
+
+    $('fn-total').textContent = '0';
+    countUp($('fn-total'), state.total, 1100);
+
+    // bars
+    var bars = $('fn-bars');
+    bars.innerHTML = '';
+    state.rounds.forEach(function (r, i) {
+      var wrap = document.createElement('div');
+      wrap.className = 'bar';
+      wrap.innerHTML =
+        '<span class="w">' + (r.weight > 1 ? 'x' + r.weight : '') + '</span>' +
+        '<span class="fill"></span>' +
+        '<span class="cap">' + (i + 1) + '</span>';
+      bars.appendChild(wrap);
+      var fill = wrap.querySelector('.fill');
+      fill.style.background = pointsColour(r.base);
+      requestAnimationFrame(function () {
+        fill.style.height = Math.max(3, Math.round((r.base / 100) * 100)) + '%';
+      });
+    });
+
+    // list
+    var list = $('fn-list');
+    list.innerHTML = '';
+    state.rounds.forEach(function (r, i) {
+      var row = document.createElement('div');
+      row.className = 'fl-row';
+      row.innerHTML =
+        '<span class="fl-n">' + (i + 1) + '</span>' +
+        '<span class="fl-name"></span>' +
+        '<span class="fl-km">' + Math.round(r.distKm).toLocaleString() + ' km</span>' +
+        '<span class="fl-p"></span>';
+      row.querySelector('.fl-name').textContent = r.q.answer.name;
+      var p = row.querySelector('.fl-p');
+      p.textContent = r.points;
+      p.style.color = pointsColour(r.base);
+      list.appendChild(row);
+    });
+
+    drawMiniMap();
+  }
+
+  function drawMiniMap() {
+    if (!miniMap) {
+      miniMap = L.map('minimap', {
+        preferCanvas: true, zoomControl: false, attributionControl: false,
+        minZoom: 1, maxZoom: 8, dragging: true, scrollWheelZoom: false, doubleClickZoom: false
+      }).setView([20, 0], 1);
+      L.geoJSON(WORLD_GEOJSON, { style: styleWorld }).addTo(miniMap);
+    }
+    if (miniMap._resultLayer) miniMap.removeLayer(miniMap._resultLayer);
+
+    var group = L.layerGroup().addTo(miniMap);
+    miniMap._resultLayer = group;
+    var pts = [];
+
+    state.rounds.forEach(function (r) {
+      var a = [r.q.answer.lat, r.q.answer.lon];
+      pts.push(a);
+      L.circleMarker(a, { radius: 4, color: '#fff', weight: 1, fillColor: '#33d17a', fillOpacity: 1, interactive: false }).addTo(group);
+      if (!r.guess) return;
+      var g = [r.guess.lat, r.guess.lon];
+      pts.push(g);
+      L.circleMarker(g, { radius: 3.4, color: '#fff', weight: 1, fillColor: '#ff7a1a', fillOpacity: 1, interactive: false }).addTo(group);
+      greatCircleSegments({ lat: g[0], lon: g[1] }, { lat: a[0], lon: a[1] }, 32).forEach(function (seg) {
+        L.polyline(seg, { color: '#ff7a1a', weight: 1.4, opacity: 0.6, interactive: false }).addTo(group);
+      });
+    });
+
+    setTimeout(function () {
+      miniMap.invalidateSize();
+      if (pts.length) miniMap.fitBounds(L.latLngBounds(pts).pad(0.25), { animate: false, maxZoom: 5 });
+    }, 60);
+  }
+
+  function paintBest() {
+    var best = readBest();
+    $('best-line').innerHTML = best ? ('Your best: <b>' + best + '</b> / 1000') : '';
+  }
+
+  // ---------------- confetti (bullseye only) ----------------
+  function confettiBurst() {
+    var cv = $('confetti');
+    var ctx = cv.getContext('2d');
+    cv.width = window.innerWidth; cv.height = window.innerHeight;
+    cv.style.display = 'block';
+
+    var colours = ['#ff7a1a', '#33d17a', '#ffc046', '#e8edf7'];
+    var bits = [];
+    for (var i = 0; i < 90; i++) {
+      bits.push({
+        x: cv.width / 2, y: cv.height * 0.62,
+        vx: (Math.random() - 0.5) * 13,
+        vy: -Math.random() * 13 - 3,
+        r: 2 + Math.random() * 4,
+        c: colours[Math.floor(Math.random() * colours.length)],
+        life: 1
+      });
+    }
+
+    var t0 = performance.now();
+    (function frame(now) {
+      var dt = Math.min(40, now - t0) / 16.7; t0 = now;
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      var alive = 0;
+      bits.forEach(function (b) {
+        b.vy += 0.42 * dt;
+        b.x += b.vx * dt; b.y += b.vy * dt;
+        b.life -= 0.012 * dt;
+        if (b.life <= 0 || b.y > cv.height) return;
+        alive++;
+        ctx.globalAlpha = Math.max(0, b.life);
+        ctx.fillStyle = b.c;
+        ctx.fillRect(b.x, b.y, b.r, b.r * 1.7);
+      });
+      ctx.globalAlpha = 1;
+      if (alive) requestAnimationFrame(frame);
+      else { ctx.clearRect(0, 0, cv.width, cv.height); cv.style.display = 'none'; }
+    })(t0);
+  }
+
+  // ---------------- wiring ----------------
+  $('btn-play').addEventListener('click', startGame);
+  $('btn-again').addEventListener('click', startGame);
+  $('btn-home').addEventListener('click', function () { showScreen('screen-title'); paintBest(); });
+  $('btn-lock').addEventListener('click', lockIn);
+  $('btn-next').addEventListener('click', nextRound);
+  $('btn-collapse').addEventListener('click', toggleCard);
+
+  function toggleCard() {
+    var c = $('qcard');
+    var collapsed = c.className.indexOf('collapsed') !== -1;
+    c.className = 'qcard' + (collapsed ? '' : ' collapsed');
+    $('btn-collapse').innerHTML = collapsed ? '&#9650;' : '&#9660;';
+  }
+
+  document.addEventListener('keydown', function (e) {
+    // a focused button already turns Enter into a click, so let it, or the round
+    // advances twice on one keypress
+    if (e.key === 'Enter' && e.target && e.target.tagName === 'BUTTON') return;
+
+    if (e.key === 'Enter') {
+      if ($('screen-title').className.indexOf('on') !== -1) { startGame(); return; }
+      if ($('screen-final').className.indexOf('on') !== -1) { startGame(); return; }
+      if (state.phase === 'guess') lockIn();
+      else if (state.phase === 'reveal') nextRound();
+      e.preventDefault();
+    } else if (e.key === 'Escape') {
+      if ($('screen-game').className.indexOf('on') !== -1) { toggleCard(); e.preventDefault(); }
+    }
+  });
+
+  window.addEventListener('resize', function () {
+    if (map && $('screen-game').className.indexOf('on') !== -1) map.invalidateSize();
+  });
+
+  paintBest();
+})();
+</script>
+</body>
+</html>
