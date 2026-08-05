@@ -910,6 +910,9 @@
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.textBaseline = 'middle';
+      /* The board's screen rect changed, so republish it for the DOM chrome.
+       * This is the only place that knows the presented size has moved. */
+      Theme.publishStage(canvas);
     },
 
     /* Force the static layer to rebuild. The editor calls this on every edit. */

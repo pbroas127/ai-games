@@ -117,6 +117,7 @@
       cell: 0,                         // centre cell index
 
       bullets: [],                     // {x,y,vx,vy} fixed px, insertion order
+      bulletsSkipped: 0,               // shots the MAX_BULLETS cap swallowed
 
       result: RESULT.RUN,
       deathCause: '', deathX: 0, deathY: 0,
@@ -199,6 +200,7 @@
     st.teleLock = -1;
     st.cell = st.room.start.y * st.w + st.room.start.x;
     st.bullets.length = 0;
+    st.bulletsSkipped = 0;
     st.result = RESULT.RUN;
     st.deathCause = ''; st.deathX = 0; st.deathY = 0;
 
@@ -333,12 +335,18 @@
   function spawnBullets(st) {
     for (var i = 0; i < st.turrets.length; i++) {
       var tr = st.turrets[i];
-      if (st.bullets.length >= MAX_BULLETS) return;
       if ((st.t % tr.period) !== (tr.phase % tr.period)) continue;
 
       var d = K.CARD[tr.dir];
       var mx = tr.cx + d[0], my = tr.cy + d[1];
       if (isSolid(st, mx, my)) continue;          // muzzle blocked, no shot
+
+      /* At the cap the shot simply does not happen, which used to be invisible:
+       * the room looks like it is firing and some turrets silently are not.
+       * Count it so a caller can SEE that this room's hazards are not all
+       * running. Deliberately NOT mixed into hash() — it is a report about the
+       * run, not part of it, and every existing par and ghost must stay valid. */
+      if (st.bullets.length >= MAX_BULLETS) { st.bulletsSkipped++; continue; }
 
       var bx = centerFx(mx), by = centerFx(my);
       st.bullets.push({

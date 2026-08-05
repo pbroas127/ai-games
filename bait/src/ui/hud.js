@@ -1,20 +1,30 @@
 /* BAIT — the in-run HUD.
  *
  * OWNER: Frame (UI). Deliberately minimal, because the room is the thing.
- * Timer, deaths, keys, token. It sits in the plate's top margin, never
- * overlaps the play area, and NEVER moves or animates during a run — a HUD
- * that draws attention during a precision run is a bug (SPEC §2, Boss's
- * brief). Values change by textContent swap only.
+ * Timer, deaths, keys, token. It NEVER moves and never animates during a
+ * run — a HUD that draws attention during a precision run is a bug (SPEC §2,
+ * Boss's brief). Values change by textContent swap only.
  *
- * CONTRACT (for Relay's modes.js / Forge's loop):
- *   BAIT.Hud.show()
- *   BAIT.Hud.hide()
- *   BAIT.Hud.setTitle('CH 2 · ROOM 07 — CADENCE')   // static per room
- *   BAIT.Hud.update({ ticks, deaths, keys, keysTotal, token })
+ * PLACEMENT: the strip sits in the canvas plate's TOP margin — the band
+ * between the plate border (PLATE_PAD, y=18) and the room's top edge
+ * (ROOM_Y, y=70), spanning exactly the room's width. draw.js keeps its
+ * title block in the BOTTOM margin, so the two never collide, and the strip
+ * can never clip the plate border or occlude a single cell of play. The
+ * position is computed from the real #stage rect on show and on resize,
+ * never per frame.
+ *
+ * CONTRACT (play.js calls update every rendered frame):
+ *   BAIT.Hud.show() / .hide()
+ *   BAIT.Hud.update({ ticks, deaths, keys, keysTotal, token, room })
  *     ticks      sim ticks elapsed (120Hz) — formatted here
- *     deaths     deaths this attempt/run
+ *     deaths     deaths this attempt
  *     keys       collected count; keysTotal 0 hides the slot
- *     token      'none' | 'open' | 'taken'  ('none' hides the slot)
+ *     token      the SIM boolean: true while the token is carried. Whether
+ *                the slot shows at all comes from the room (no token tile,
+ *                no slot). A legacy 'none'|'open'|'taken' string still works.
+ *     room       the live room; sets the title line and the token slot,
+ *                cached by reference so the per-frame cost is comparisons.
+ *   BAIT.Hud.setTitle(text)   manual override, e.g. '2-07 — FOUR CORNERS'
  *
  * update() is safe to call every frame: each field writes to the DOM only
  * when its displayed string actually changed.
@@ -28,6 +38,7 @@
 
   var root = null, refs = null;
   var last = { time: '', deaths: '', keys: '', token: '', title: '' };
+  var roomRef = null, roomHasToken = false;
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -83,9 +94,29 @@
     };
 
     document.getElementById('ui').appendChild(root);
+    window.addEventListener('resize', place);
   }
 
-  function show() { build(); root.className = 'open'; }
+  /* Fit the strip to the plate's top margin, in the canvas's own scale.
+   * Every number here is Ink's (Theme.m); nothing is invented. Falls back
+   * to the CSS default (viewport top) when there is no #stage, e.g. in a
+   * DOM-only harness. */
+  function place() {
+    if (!root) return;
+    var c = document.getElementById('stage');
+    var T = BAIT.Theme, m = T && T.m;
+    if (!c || !m || !c.getBoundingClientRect) return;
+    var r = c.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    var sx = r.width / m.CANVAS_W, sy = r.height / m.CANVAS_H;
+    root.style.left = (r.left + m.ROOM_X * sx) + 'px';
+    root.style.top = (r.top + m.PLATE_PAD * sy) + 'px';
+    root.style.width = (m.ROOM_W * sx) + 'px';
+    root.style.height = ((m.ROOM_Y - m.PLATE_PAD) * sy) + 'px';
+    root.style.transform = 'none';
+  }
+
+  function show() { build(); root.className = 'open'; place(); }
   function hide() { if (root) root.className = ''; }
 
   function setTitle(text) {
@@ -95,8 +126,33 @@
     refs.title.textContent = last.title;
   }
 
+  /* sim boolean + room -> 'none' | 'open' | 'taken'. The room scan runs
+   * once per room, cached by reference. */
+  function tokenState(s) {
+    if (typeof s.token === 'string') return s.token;
+    if (s.room !== roomRef) {
+      roomRef = s.room;
+      roomHasToken = false;
+      var P = BAIT.Pieces, tiles = s.room && s.room.tiles;
+      if (P && tiles) {
+        for (var i = 0; i < tiles.length; i++) {
+          if (tiles[i] === P.TILE.TOKEN) { roomHasToken = true; break; }
+        }
+      }
+    }
+    if (!roomHasToken) return 'none';
+    return s.token ? 'taken' : 'open';
+  }
+
   function update(s) {
     if (!root || !s) return;
+
+    if (s.room) {
+      var name = s.room.name || '';
+      setTitle(s.room.id
+        ? String(s.room.id) + (name ? ' — ' + name : '')
+        : name);
+    }
 
     var t = BAIT.Screens ? BAIT.Screens.fmtTime(s.ticks || 0) : String(s.ticks || 0);
     if (t !== last.time) { last.time = t; refs.time.textContent = t; }
@@ -111,7 +167,7 @@
       refs.keysSlot.style.display = k ? '' : 'none';
     }
 
-    var tok = s.token || 'none';
+    var tok = tokenState(s);
     if (tok !== last.token) {
       last.token = tok;
       refs.tokenSlot.style.display = tok === 'none' ? 'none' : '';

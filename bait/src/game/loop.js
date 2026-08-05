@@ -37,6 +37,11 @@
   var samples = new Float64Array(SAMPLES);
   var sampleAt = 0, sampleCount = 0;
   var worstMs = 0, ticksLastFrame = 0, totalTicks = 0, frames = 0;
+  /* Frames where the catch-up cap was hit and the backlog was thrown away, and
+   * the total wall-clock time discarded. Dropping the debt is right, doing it
+   * without saying so is not: on a machine that cannot hold 120Hz the game
+   * quietly runs in slow motion and every other number here still looks fine. */
+  var droppedFrames = 0, droppedMs = 0;
   var overlay = null, overlayOn = false, overlayAcc = 0;
 
   function now() {
@@ -68,8 +73,9 @@
       acc -= STEP_MS;
       steps++;
     }
-    /* Hit the cap: throw the backlog away rather than spiral. */
-    if (acc >= STEP_MS) acc = 0;
+    /* Hit the cap: throw the backlog away rather than spiral, and record that
+     * we did it. */
+    if (acc >= STEP_MS) { droppedFrames++; droppedMs += acc; acc = 0; }
 
     ticksLastFrame = steps;
     totalTicks += steps;
@@ -125,12 +131,15 @@
       ticksLastFrame: ticksLastFrame,
       totalTicks: totalTicks,
       frames: frames,
+      droppedFrames: droppedFrames,
+      droppedMs: droppedMs,
       alpha: acc / STEP_MS
     };
   }
 
   function resetStats() {
     sampleAt = 0; sampleCount = 0; worstMs = 0; frames = 0; totalTicks = 0;
+    droppedFrames = 0; droppedMs = 0;
   }
 
   /* The built-in readout. Off by default and it does not exist in the DOM
@@ -141,7 +150,12 @@
     overlay.textContent =
       s.fps.toFixed(0) + ' fps   ' + s.frameMs.toFixed(2) + ' ms   worst ' +
       s.worstMs.toFixed(1) + ' ms   ' + s.ticksLastFrame + ' tick' +
-      (s.ticksLastFrame === 1 ? '' : 's') + '/frame';
+      (s.ticksLastFrame === 1 ? '' : 's') + '/frame' +
+      /* Only ever shown when it has happened, so it reads as an alarm rather
+       * than another number to skim past. */
+      (s.droppedFrames
+        ? '   DROPPED ' + s.droppedFrames + ' (' + s.droppedMs.toFixed(0) + ' ms)'
+        : '');
   }
 
   function showStats(on) {

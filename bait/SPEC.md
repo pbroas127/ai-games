@@ -268,6 +268,12 @@ Nothing ships until every line is true:
       full game, all three modes.
 - [ ] Campaign: 6 chapters, ~80 rooms, medals, unlock gates, all reachable.
 - [ ] Gauntlet: today's five rooms generate, are solvable, produce a string.
+- [ ] `verify --full` has passed the WHOLE daily window through
+      `Daily.VERIFIED_UNTIL`. Until that run exists the constant is a claim
+      rather than a proof, and it may not ship as one. Relay's warning is part
+      of the gate: any generator or filter fix reshuffles every day and
+      invalidates the entire proof, so the remedy is always a full re-run and
+      never a patch. Which is why this run happens EARLY, not on ship day.
 - [ ] Workshop: place → test → prove-gate → publish → code → reopen from code
       round-trips, including in a fresh browser profile.
 - [ ] Ghosts render and are frame-accurate against a recorded run.

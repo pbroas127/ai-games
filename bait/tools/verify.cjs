@@ -40,7 +40,36 @@ var CORE = [
 /* The campaign, plus the daily generator. daily.js lives under src/game/ and
  * is not held to the DOM-free core rule, but it must still load under Node or
  * its 1825 generated rooms can never be proven solvable. */
-var CONTENT = ['src/data/chapters.js', 'src/game/daily.js'];
+/* DISCOVERED, never hand-listed. Guest chapters arrive as src/data/ch<N>.js
+ * and register themselves through Chapters.addRooms. If this were a literal
+ * list then every chapter that landed while I was not looking would be
+ * verified as zero rooms and reported GREEN, which is the single worst thing
+ * a gate can do: silence that reads as approval. Scan the directory instead,
+ * so a file appearing on disk is a file I check.
+ *
+ * par.js is deliberately excluded. It is my own output, and loading it would
+ * stamp par onto rooms that are supposed to reach me with par null. */
+function chapterFiles() {
+  var dir = path.join(ROOT, 'src', 'data'), out = [];
+  var names;
+  try { names = fs.readdirSync(dir); } catch (e) { return out; }
+  for (var i = 0; i < names.length; i++) {
+    if (/^ch\d+\.js$/.test(names[i])) out.push(names[i]);
+  }
+  out.sort(function (a, b) {
+    return parseInt(a.slice(2), 10) - parseInt(b.slice(2), 10);
+  });
+  for (i = 0; i < out.length; i++) out[i] = 'src/data/' + out[i];
+  return out;
+}
+
+var CONTENT = ['src/data/chapters.js']
+  .concat(chapterFiles())
+  .concat(['src/game/daily.js']);
+
+/* Set by --quick. Runs the structural half of every room check and none of
+ * the searches. See the comment at its use site in checkRooms. */
+var STRUCTURAL_ONLY = false;
 
 /* ============================================================= reporting == */
 
@@ -298,6 +327,68 @@ function reachability(room) {
   var problems = [];
   function cellName(i) { return '(' + (i % w) + ',' + ((i / w) | 0) + ')'; }
 
+  /* THE EXIT AS A WALL (raised by Forge, off 2-10).
+   *
+   * Standing on a live exit ends the run, so anything reachable ONLY by
+   * crossing the exit cell can never be collected and carried out. That is a
+   * whole class of unwinnable room that reads perfectly fine on the page.
+   *
+   * Sound ONLY when the room has no keys. The exit stays shut until every key
+   * is collected, so in a keyed room the player can walk straight over an
+   * inert exit and a token behind it is genuinely reachable. Running this
+   * check there would fail good rooms, so it does not run there. */
+  var keyTotalForGate = 0;
+  for (var kg = 0; kg < n; kg++) if (room.tiles[kg] === TILE.KEY) keyTotalForGate++;
+
+  var tokenIdx = -1;
+  for (var tk = 0; tk < n; tk++) if (room.tiles[tk] === TILE.TOKEN) { tokenIdx = tk; break; }
+
+  if (keyTotalForGate === 0 && tokenIdx >= 0 && seen[tokenIdx]) {
+    var blockedSeen = new Uint8Array(n);
+    var q3 = [startIdx];
+    blockedSeen[startIdx] = 1;
+    while (q3.length) {
+      var c3 = q3.pop(), x3 = c3 % w, y3 = (c3 / w) | 0;
+      for (var e3 = 0; e3 < 8; e3++) {
+        var bx = x3 + DX[e3], by = y3 + DY[e3];
+        if (bx < 0 || by < 0 || bx >= w || by >= h) continue;
+        var bi = by * w + bx;
+        if (blockedSeen[bi]) continue;
+        if (blocked(room.tiles[bi])) continue;
+        if (room.tiles[bi] === TILE.EXIT) continue;      // the exit is a wall here
+        blockedSeen[bi] = 1; q3.push(bi);
+      }
+    }
+    /* Teleports again, or a pocket behind a teleport reads as sealed. */
+    var ch3 = true;
+    while (ch3) {
+      ch3 = false;
+      for (var ti = 0; ti < n; ti++) {
+        if (room.tiles[ti] !== TILE.TELEPORT || !blockedSeen[ti]) continue;
+        var tw = Room.twinOf(room, ti);
+        if (tw < 0 || blockedSeen[tw]) continue;
+        blockedSeen[tw] = 1; q3.push(tw); ch3 = true;
+        while (q3.length) {
+          var c4 = q3.pop(), x4 = c4 % w, y4 = (c4 / w) | 0;
+          for (var e4 = 0; e4 < 8; e4++) {
+            var ax = x4 + DX[e4], ay = y4 + DY[e4];
+            if (ax < 0 || ay < 0 || ax >= w || ay >= h) continue;
+            var ai2 = ay * w + ax;
+            if (blockedSeen[ai2] || blocked(room.tiles[ai2])) continue;
+            if (room.tiles[ai2] === TILE.EXIT) continue;
+            blockedSeen[ai2] = 1; q3.push(ai2);
+          }
+        }
+      }
+    }
+
+    if (!blockedSeen[tokenIdx]) {
+      problems.push('the token at ' + cellName(tokenIdx) + ' sits behind the exit. This room has no ' +
+        'keys, so the exit is live from tick 0 and standing on it ends the run. Every route to ' +
+        'the token crosses it, so the token can never be collected and carried out.');
+    }
+  }
+
   var keysTotal = 0, keysReachable = 0;
   for (var t = 0; t < n; t++) {
     var id = room.tiles[t];
@@ -413,7 +504,15 @@ function checkRooms(onlyChapter) {
       } else row.codec = 'pend';
 
       /* ---- solver-dependent checks (SPEC §7.1-7.3, §7.5-7.6) ---- */
-      if (haveSim) {
+      if (haveSim && STRUCTURAL_ONLY) {
+        /* --quick. Everything above this line is a flood fill or a byte
+         * compare and costs microseconds; everything below it is a search and
+         * costs seconds. An author mid-chapter wants the cheap half back
+         * immediately, and a gate slow enough to skip is a gate nobody runs.
+         * This mode can never say a room is GOOD, only that its structure is
+         * not obviously broken, so it exits 2 rather than 0. */
+        row.solve = 'skip';
+      } else if (haveSim) {
         var triv = trivialDirection(room);
         if (triv) {
           fail(id + ': trivially cleared', 'holding ' + DIR_NAME[triv] +
@@ -543,12 +642,7 @@ function checkRooms(onlyChapter) {
       '\n  Authors: do not touch these on account of this run. They are mine.' + C.x);
   }
 
-  var parKeys = Object.keys(parTable);
-  if (parKeys.length) {
-    var parPath = path.join(__dirname, 'par.generated.json');
-    fs.writeFileSync(parPath, JSON.stringify(parTable, null, 2) + '\n', 'utf8');
-    console.log('\n  ' + C.d + 'par for ' + parKeys.length + ' room(s) written to tools/par.generated.json' + C.x);
-  }
+  writePar(parTable, onlyChapter);
 
   section('CAMPAIGN TOTAL');
   if (totalAuthored !== totalPlanned) {
@@ -645,6 +739,50 @@ var SELFTEST = [
            '#E.........#',
            '############'],
     expect: { trivial: false, solvable: true, tokenFree: true }
+  },
+  {
+    /* Raised by Forge off room 2-10. The lane holding the token can only be
+     * entered at its right-hand end, and the exit sits in the mouth. With no
+     * keys in the room the exit is live from tick 0, so crossing it ends the
+     * run and the token can never be carried out. Reads completely fine on
+     * the page, which is the point. */
+    name: 'token behind the only exit is unwinnable',
+    grid: ['####################',
+           '#o..............E.##',
+           '#################.##',
+           '#S.................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '#..................#',
+           '####################'],
+    expect: { reachable: false }
+  },
+  {
+    /* Raised by Crucible: the search must be able to ride a deflector, which
+     * means holding no direction, which means dir 0 must stay in the branch
+     * set for a deflector room. Pinned here so it cannot regress. */
+    name: 'deflector shaft is solvable',
+    grid: ['####################',
+           '####################',
+           '####################',
+           '#S........v#########',
+           '##########.#######.#',
+           '##########.#######.#',
+           '##########.#######.#',
+           '##########.#######E#',
+           '##########.#######.#',
+           '##########.#######.#',
+           '##########.#######.#',
+           '##########.........#',
+           '####################',
+           '####################'],
+    expect: { trivial: false, solvable: true }
   },
   {
     /* The token hangs two cells below the through-corridor in a capped spur,
@@ -812,7 +950,15 @@ function checkDaily(days) {
       }
       if (!sol.ok) { fail('daily ' + s + ' room ' + (r + 1) + ' NOT SOLVABLE', sol.reason); broken++; continue; }
       var proof = replayProves(room, sol.inputs);
-      if (!proof.ok) { fail('daily ' + s + ' room ' + (r + 1) + ' does not replay', proof.why); broken++; }
+      if (!proof.ok) { fail('daily ' + s + ' room ' + (r + 1) + ' does not replay', proof.why); broken++; continue; }
+      if (proof.skipped) {
+        fail('daily ' + s + ' room ' + (r + 1) + ' overflowed the bullet cap',
+          proof.skipped + ' shot(s) swallowed by MAX_BULLETS, peak ' + proof.peakBullets + ' live.\n' +
+          'Relay ruled this a hard fail on daily.js rather than a tuning warning: his\n' +
+          'turret budget puts the ceiling under ten live bullets, so a swallowed shot is\n' +
+          'evidence the generator emitted something he did not intend.');
+        broken++;
+      }
     }
     checked++;
   }
@@ -833,6 +979,204 @@ function seedPlusDays(seed, n) {
   var y = (seed / 10000) | 0, m = ((seed / 100) | 0) % 100, d = seed % 100;
   var t = new Date(Date.UTC(y, m - 1, d + n));
   return t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate();
+}
+
+/* ========================================================== par emission == *
+ * RESUME.md: "Par is generated, never typed. Hand-typing 81 par times would
+ * drift into a silently wrong Swift medal."
+ *
+ * That was only half true until now. I wrote tools/par.generated.json and a
+ * HUMAN copied it into src/data/par.js, which is the file the game actually
+ * reads. Nobody had done that since chapter 2, so par.js held 26 rooms while
+ * I had solved 38, and every room past 2-13 was shipping with no Swift medal
+ * and no error anywhere. A manual step in a pipeline built to remove manual
+ * steps is just a slower drift. So I write both, from the same table, in the
+ * same breath.
+ *
+ * MERGE, do not replace, when the run was restricted. --chapter 4 knows par
+ * for chapter 4 and nothing else, and I told four authors to run exactly that
+ * while they work. Replacing wholesale there would silently wipe par for the
+ * other five chapters and the only symptom would be a medal quietly going
+ * missing weeks later.
+ */
+function writePar(parTable, onlyChapter) {
+  var keys = Object.keys(parTable);
+  if (!keys.length) return;
+
+  var jsonPath = path.join(__dirname, 'par.generated.json');
+  var merged = parTable, i;
+
+  if (onlyChapter) {
+    var prev = {};
+    try { prev = JSON.parse(fs.readFileSync(jsonPath, 'utf8')); } catch (e) { prev = {}; }
+    merged = {};
+    var old = Object.keys(prev);
+    for (i = 0; i < old.length; i++) merged[old[i]] = prev[old[i]];
+    for (i = 0; i < keys.length; i++) merged[keys[i]] = parTable[keys[i]];
+  }
+
+  var ids = Object.keys(merged).sort();
+  var ordered = {};
+  for (i = 0; i < ids.length; i++) ordered[ids[i]] = merged[ids[i]];
+
+  fs.writeFileSync(jsonPath, JSON.stringify(ordered, null, 2) + '\n', 'utf8');
+
+  /* The shipped mirror. A classic script, not JSON, because fetch() of a
+   * local file is blocked on file:// and the game must run from a
+   * double-click. Chapters.applyPar() picks this up at boot. */
+  var out = [
+    '/* BAIT — generated par times. DO NOT EDIT BY HAND.',
+    ' *',
+    ' * Written by tools/verify.cjs, which solves every authored room and takes',
+    ' * the optimal route it found. Editing this file by hand desynchronises it',
+    ' * from tools/par.generated.json and the next verify run overwrites you.',
+    ' *',
+    ' * Ships as a classic script rather than JSON because fetch() of a local file',
+    ' * is blocked on file:// and the game must run from a double-click.',
+    ' * Chapters.applyPar() picks this up at boot.',
+    ' */',
+    '(function (BAIT) {',
+    "  'use strict';",
+    '  BAIT.data = BAIT.data || {};',
+    '  BAIT.data.par = ' + JSON.stringify(ordered, null, 2).split('\n').join('\n  ') + ';',
+    '})(typeof window !== \'undefined\'',
+    '  ? (window.BAIT = window.BAIT || {})',
+    '  : (global.BAIT = global.BAIT || {}));',
+    ''
+  ].join('\n');
+  fs.writeFileSync(path.join(ROOT, 'src', 'data', 'par.js'), out, 'utf8');
+
+  console.log('\n  ' + C.d + 'par for ' + ids.length + ' room(s) -> tools/par.generated.json' +
+    ' and src/data/par.js' + (onlyChapter ? ' (merged, chapter ' + onlyChapter + ' only)' : '') + C.x);
+}
+
+/* ================================================== sharded release sweep = *
+ * SPEC §7 wants every daily seed out to VERIFIED_UNTIL proven solvable. That
+ * is ~1800 generated rooms and, at what the hard ones actually cost, several
+ * hours in one process. A check that takes an afternoon is a check that never
+ * gets run, and an unrun check on a DATED constant is the worst shape of risk
+ * in this game: nothing fails today, and one morning next spring everybody on
+ * earth gets the same unclearable room and there is no server to fix it from.
+ *
+ * So --release forks one child per core, each taking every Nth day. Plain
+ * child_process, no dependency, and each child is the same verifier running
+ * the same solver, so a shard result is not a weaker result.
+ *
+ * Days are striped rather than blocked on purpose. Cost per day is uneven and
+ * unpredictable, so contiguous blocks would leave seven cores idle behind one
+ * slow one. Striping spreads the expensive days across all of them.
+ */
+function shardDays(seed, days, index, count, out) {
+  var Daily = global.BAIT.Daily;
+  for (var d = index; d < days; d += count) {
+    var s = seedPlusDays(seed, d);
+    if (s > Daily.VERIFIED_UNTIL) break;
+    var rooms;
+    try { rooms = Daily.generate(s); }
+    catch (e) { out.push('BAD ' + s + ' 0 threw during generation: ' + e.message); continue; }
+    if (!rooms || rooms.length !== 5) {
+      out.push('BAD ' + s + ' 0 produced ' + (rooms ? rooms.length : 0) + ' rooms, expected 5');
+      continue;
+    }
+    for (var r = 0; r < rooms.length; r++) {
+      var v = global.BAIT.Room.validate(rooms[r]);
+      if (!v.ok) { out.push('BAD ' + s + ' ' + (r + 1) + ' invalid: ' + v.errors[0]); continue; }
+      var sol = solveEscalating(rooms[r], {});
+      if (!sol.ok && sol.status === 'budget') { out.push('UNK ' + s + ' ' + (r + 1) + ' ' + sol.reason); continue; }
+      if (!sol.ok) { out.push('BAD ' + s + ' ' + (r + 1) + ' NOT SOLVABLE: ' + sol.reason); continue; }
+      var proof = replayProves(rooms[r], sol.inputs);
+      if (!proof.ok) { out.push('BAD ' + s + ' ' + (r + 1) + ' does not replay: ' + proof.why); continue; }
+      if (proof.skipped) {
+        out.push('BAD ' + s + ' ' + (r + 1) + ' overflowed the bullet cap: ' + proof.skipped +
+          ' shot(s) swallowed by MAX_BULLETS, peak ' + proof.peakBullets + ' live (Relay: hard fail on daily.js)');
+      }
+    }
+    out.push('DAY ' + s);
+  }
+}
+
+function releaseSweep(days, done) {
+  section('DAILY RELEASE SWEEP — every seed to VERIFIED_UNTIL (SPEC §7)');
+  var Daily = global.BAIT.Daily;
+  if (!Daily) { pending('release sweep', 'needs BAIT.Daily (Relay)'); return done(); }
+
+  var cp = require('child_process');
+  var os = require('os');
+  var workers = Math.max(1, Math.min((os.cpus() || []).length - 1, 12));
+  var seed = Daily.todaySeed();
+
+  console.log('  ' + C.d + workers + ' worker(s), ' + days + ' days from ' + seed +
+    ', ceiling ' + Daily.VERIFIED_UNTIL + '. This is the slow one.' + C.x);
+
+  var started = Date.now();
+  var lines = [], live = workers, broke = false, daysDone = 0;
+
+  for (var i = 0; i < workers; i++) spawnShard(i);
+
+  function spawnShard(idx) {
+    var kid = cp.spawn(process.execPath,
+      [__filename, '--shard', idx + '/' + workers, '--days', String(days)],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
+    var buf = '', err = '';
+    kid.stdout.setEncoding('utf8');
+    kid.stdout.on('data', function (chunk) {
+      buf += chunk;
+      /* Progress, because a five hour run with a silent terminal is
+       * indistinguishable from a hung one and somebody will kill it. */
+      var whole = buf.split('\n'); buf = whole.pop();
+      for (var j = 0; j < whole.length; j++) {
+        lines.push(whole[j]);
+        if (whole[j].slice(0, 4) === 'DAY ') {
+          daysDone++;
+          if (daysDone % 10 === 0) {
+            process.stdout.write('  ' + C.d + daysDone + '/' + days + ' days, ' +
+              ((Date.now() - started) / 60000).toFixed(1) + ' min\r' + C.x);
+          }
+        }
+      }
+    });
+    kid.stderr.setEncoding('utf8');
+    kid.stderr.on('data', function (c) { err += c; });
+    kid.on('error', function (e) {
+      broke = true; fail('release shard ' + idx + ' could not start', String(e));
+      if (!--live) settle();
+    });
+    kid.on('close', function (code) {
+      if (buf) lines.push(buf);
+      if (code !== 0 && err) {
+        broke = true;
+        fail('release shard ' + idx + ' died', err.split('\n').slice(0, 4).join('\n'));
+      }
+      if (!--live) settle();
+    });
+  }
+
+  function settle() {
+    var unknown = 0, bad = [], ok = 0, j;
+    for (j = 0; j < lines.length; j++) {
+      var L = lines[j].trim();
+      if (!L) continue;
+      if (L.slice(0, 4) === 'DAY ') { ok++; continue; }
+      if (L.slice(0, 4) === 'UNK ') { unknown++; continue; }
+      if (L.slice(0, 4) === 'BAD ') bad.push(L.slice(4));
+    }
+    process.stdout.write('                                        \r');
+
+    var mins = ((Date.now() - started) / 60000).toFixed(1);
+    for (j = 0; j < bad.length && j < 40; j++) fail('daily ' + bad[j]);
+    if (bad.length > 40) fail('and ' + (bad.length - 40) + ' more generated rooms', 'truncated');
+    if (!bad.length && !broke) {
+      pass(ok + ' daily gauntlets, ' + (ok * 5) + ' rooms, every one solvable  ' +
+        C.d + '(' + mins + ' min across ' + workers + ' worker(s))' + C.x);
+    }
+    if (unknown) {
+      warn(unknown + ' generated room(s) came back UNKNOWN',
+        'my solver ran out of budget on them. That is not a fault in the generator, and it\n' +
+        'is not a clean bill of health either. Those seeds are UNPROVEN, and VERIFIED_UNTIL\n' +
+        'claims they are proven. Whoever ships this should know which of those two it is.');
+    }
+    done();
+  }
 }
 
 /* ========================================================== hostile input = *
@@ -954,8 +1298,40 @@ function fuzzCodec() {
 
 /* =================================================================== main = */
 
+/* A --release worker. Loads the same files, prints one machine-readable line
+ * per day and per problem, says nothing else. Never called by a human. */
+function runShard(spec, days) {
+  var bits = spec.split('/');
+  var index = parseInt(bits[0], 10) || 0;
+  var count = parseInt(bits[1], 10) || 1;
+
+  global.BAIT = global.BAIT || {};
+  var quiet = console.log;
+  console.log = function () {};              /* loadAll narrates; a shard must not */
+  var i;
+  for (i = 0; i < CORE.length; i++) require(path.resolve(ROOT, CORE[i]));
+  for (i = 0; i < CONTENT.length; i++) {
+    try { require(path.resolve(ROOT, CONTENT[i])); } catch (e) { /* reported by the parent run */ }
+  }
+  console.log = quiet;
+
+  if (!global.BAIT.Daily) { console.log('BAD 0 0 daily.js did not load in shard'); return 1; }
+
+  var out = [];
+  shardDays(global.BAIT.Daily.todaySeed(), days, index, count, out);
+  for (i = 0; i < out.length; i++) console.log(out[i]);
+  return 0;
+}
+
 function main() {
   var args = process.argv.slice(2);
+
+  var shardAt = args.indexOf('--shard');
+  if (shardAt !== -1) {
+    var dAt = args.indexOf('--days');
+    return runShard(args[shardAt + 1] || '0/1',
+      dAt !== -1 ? (parseInt(args[dAt + 1], 10) || 0) : 365);
+  }
 
   if (args.indexOf('--help') !== -1) {
     console.log([
@@ -965,8 +1341,16 @@ function main() {
       '  --file <path>     lint one file (implies --lint). Check your own core',
       '                    file before you hand it over.',
       '  --chapter <n>     restrict room checks to one chapter',
+      '  --quick           structure only, no solver. Seconds, not minutes.',
+      '                    Catches an unreachable exit, a missing plate, a bad',
+      '                    codec round-trip. Cannot tell you a room is solvable,',
+      '                    so it never exits 0. Run it while you author.',
       '  --days <n>        daily gauntlets to verify from today (default 14)',
-      '  --release         verify the full 365-day window (SPEC §7). Slow.',
+      '  --release, --full verify every daily seed out to VERIFIED_UNTIL, which is',
+      '                    the actual SPEC §7 requirement. Forks one worker per core',
+      '                    and still takes a long time. Run it before you ship, not',
+      '                    while you work. Combine with --days to sweep a shorter',
+      '                    window in parallel.',
       '',
       'exit 0 shippable, 1 real failure, 2 incomplete'
     ].join('\n'));
@@ -978,8 +1362,12 @@ function main() {
     if (args[a] === '--file' && args[a + 1]) only.push(args[++a].replace(/\\/g, '/'));
     if (args[a] === '--chapter' && args[a + 1]) onlyChapter = parseInt(args[++a], 10) || 0;
     if (args[a] === '--days' && args[a + 1]) days = parseInt(args[++a], 10) || 0;
-    if (args[a] === '--release') days = 365;
   }
+  /* SPEC §8 calls this run "verify --full" in the definition of done, so that
+   * spelling has to work or the checklist line is not literally true. */
+  var release = args.indexOf('--release') !== -1 || args.indexOf('--full') !== -1;
+  if (release && args.indexOf('--days') === -1) days = 365;
+  if (args.indexOf('--quick') !== -1) { STRUCTURAL_ONLY = true; days = 0; }
   var lintOnly = args.indexOf('--lint') !== -1 || only.length > 0;
 
   console.log(C.B + 'BAIT verifier' + C.x + '  ' + C.d + ROOT + C.x);
@@ -1001,7 +1389,14 @@ function main() {
   var coreOk = loadAll(CORE, 'core');
 
   section('CONTENT LOAD');
-  var contentOk = loadAll(CONTENT, 'content');
+  loadAll(CONTENT, 'content');
+  /* Deliberately NOT gated on every content file loading. Four authors write
+   * four chapter files at once, and one of them throwing must not blind me to
+   * the other three: that turns one person's typo into "no room was checked"
+   * for everybody. The throw is already a FAIL of its own, and the chapter it
+   * belongs to shows up as short. Only chapters.js is load-bearing here,
+   * because without it there is no campaign to walk. */
+  var contentOk = !!global.BAIT.Chapters;
 
   if (global.BAIT.Room && global.BAIT.Sim) runSelfTest();
   if (global.BAIT.Codec) fuzzCodec();
@@ -1023,8 +1418,23 @@ function main() {
     checkRooms(onlyChapter);
   }
 
-  if (global.BAIT.Daily && global.BAIT.Sim && !onlyChapter) checkDaily(days);
+  if (release) {
+    /* Forks workers, so the rest of the run has to wait for their close
+     * events. main hands the exit code back through the callback instead of
+     * returning it. */
+    if (global.BAIT.Daily && global.BAIT.Sim) {
+      releaseSweep(days, function () { process.exit(summarise()); });
+      return null;
+    }
+    pending('release sweep', 'needs BAIT.Daily (Relay)');
+  } else if (global.BAIT.Daily && global.BAIT.Sim && !onlyChapter && days > 0) {
+    checkDaily(days);
+  }
 
+  return summarise();
+}
+
+function summarise() {
   /* -------------------------------------------------------------- summary */
   section('SUMMARY');
   console.log('  ' + R.pass + ' pass, ' + C.r + R.fail + ' fail' + C.x + ', ' +
@@ -1042,9 +1452,19 @@ function main() {
     if (pendings.length > 12) console.log('  ' + C.d + '... and ' + (pendings.length - 12) + ' more' + C.x);
     return 2;
   }
+  if (STRUCTURAL_ONLY) {
+    console.log('\n' + C.y + C.B + 'STRUCTURE CLEAN' + C.x +
+      ' — and that is ALL this says. No room was solved, no par was computed,\n' +
+      '  no token was checked for a detour. This is not a pass and it is not a sign-off.\n' +
+      '  Run without --quick before you hand a chapter over.');
+    return 2;
+  }
   console.log('\n' + C.g + C.B + 'ALL GREEN' + C.x +
     ' — every room solvable, par computed, token on a worse line, codec round-trips, determinism holds.');
   return 0;
 }
 
-process.exit(main());
+/* main returns null when it has forked release workers and will exit from
+ * their callback instead. Anything else is the exit code. */
+var CODE = main();
+if (CODE !== null) process.exit(CODE);

@@ -97,6 +97,73 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 [hidden] { display: none !important; }
 
+/* ---------------------------------------------------------- board anchors */
+
+/* Chrome that must sit ON the drawn board rather than on the viewport.
+ *
+ * The board is letterboxed: it keeps 1000x700 at every window size, so its
+ * top-left is not the viewport's top-left and its scale is almost never 1.
+ * Anything positioned in raw viewport pixels lines up with the plate at
+ * exactly one window size. Below 1:1 the room's 70px top margin shrinks while
+ * fixed-size chrome does not, and the chrome overruns into the room; on a tall
+ * window the board is pushed down and the chrome floats on the void above it.
+ *
+ * theme.js publishes the live rect on every resize, so this is pure CSS.
+ * Add the class and delete your own positioning.
+ *
+ *   .on-stage     exactly the board rectangle
+ *   .plate-band   the room's top margin, full board width. FRAME: this is the
+ *                 HUD's home. The whole band is yours, my title block is in
+ *                 the BOTTOM margin, so nothing of mine is under you.
+ *
+ * Both are pointer-transparent: chrome laid over the board must never eat an
+ * input meant for the game. Put pointer-events back on the specific control
+ * that needs it, not on the band.
+ *
+ * Do NOT scale type by --stage-scale. Chrome anchors to the board, labels stay
+ * at screen size — the same rule the death callout follows.
+ */
+.on-stage, .plate-band {
+  position: fixed;
+  left: var(--stage-x, 0px);
+  top: var(--stage-y, 0px);
+  width: var(--stage-w, 100vw);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.on-stage { height: var(--stage-h, 100vh); }
+
+/* Height is the scaled margin, so the band cannot grow into the room. Content
+ * that would not fit is clipped deliberately: silently overlapping the play
+ * area is the worse failure. */
+.plate-band {
+  height: var(--plate-top, 70px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--plate-side, 100px);
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+/* Type stays at screen size while the board shrinks, so on a small board the
+ * band runs out of room. Left alone the content wraps to a second line and
+ * gets sliced by the overflow, which is how a HUD ends up unreadable.
+ *
+ * So: nothing wraps, and there is a declared order of loss. Mark whatever may
+ * be dropped first with .band-optional. FRAME: that is the room title. The
+ * numbers are load-bearing during a run and the title is not, and the title
+ * is also stencilled onto the plate itself, so losing it costs nothing.
+ *
+ * This measures the BOARD, not the window. A wide window can still present a
+ * small board, which is exactly the case a viewport media query misses. */
+.plate-band > * { white-space: nowrap; flex: 0 0 auto; }
+
+@container (max-width: 720px) {
+  .plate-band .band-optional { display: none; }
+}
+
 /* ------------------------------------------------------------------ layout */
 
 .stack { display: flex; flex-direction: column; }

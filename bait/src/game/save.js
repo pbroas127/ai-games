@@ -32,8 +32,15 @@
  *   },
  *   daily: {
  *     history: {                  // keyed by 'YYYYMMDD' string
- *       [dateSeed]: { started: bool, done: bool, cleared: 0..5,
- *                     deaths: int, ticks: int, at: int }
+ *       [dateSeed]: { started: bool, done: bool,
+ *                     slot: 0..5,       // next room to play (0-based)
+ *                     lives: 0..3,      // spent at DEATH time, not at results
+ *                     cleared: 0..5, deaths: int,
+ *                     ticks: int,       // sum of clearing-attempt ticks
+ *                     par: int|null,    // whole-run par, stamped at start so
+ *                                       //   yesterday's share string never
+ *                                       //   needs the rooms regenerated
+ *                     at: int }
  *     }
  *   },
  *   workshop: {                 // shape agreed with Chisel in #bait-build
@@ -344,6 +351,13 @@
    * The ghost is replaced only by a strictly faster clear. */
   function recordRun(roomId, summary) {
     if (!roomId || !summary) return null;
+    /* Campaign progress only. play.js calls this for every clear that has
+     * a roomId, which includes gauntlet and workshop rooms — recording
+     * those here would fill campaign.rooms with daily-YYYYMMDD ids that
+     * no menu ever reads. Daily progress lives in daily.history (owned
+     * by Daily's run controller); workshop bests go through Chisel's
+     * Workshop.recordRun. */
+    if (summary.origin && summary.origin !== 'campaign') return null;
     return change(function (d) {
       var rooms = d.campaign.rooms;
       var r = rooms[roomId];

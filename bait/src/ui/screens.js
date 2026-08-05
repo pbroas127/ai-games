@@ -10,24 +10,30 @@
  * injected below under the .scr-/.hud- prefixes; Ink may absorb it into
  * style.css verbatim — it reads only theme tokens.
  *
- * CONTRACTS this file exposes / consumes (posted in #bait-build):
- *   BAIT.Screens.show(name, data)   name: title|chapters|results|pause|settings
- *   BAIT.Screens.hide()             modes calls this when a run starts
- *   BAIT.Screens.back()             pop one level (Esc does this)
- *   BAIT.Screens.applySettings(s)   boot should call once with saved settings
+ * CONTRACTS this file exposes / consumes (agreed in #bait build):
+ *   BAIT.Screens.show(name, data)   title|chapters|gauntlet|results|pause|settings
+ *   BAIT.Screens.hide()             boot's router calls this when a run starts
+ *   BAIT.Screens.back()             Modes.back() when Modes exists, else local
+ *   BAIT.Screens.applySettings(s)   also applied once when the first screen builds
  *   BAIT.Screens.fmtTime(ticks)     120Hz ticks -> "m:ss.d" (shared formatter)
  *
- *   Consumes, all defensively (reconciled when owners post):
- *   BAIT.Modes.go(name, data)              — Relay
- *   BAIT.Save.get()/.patch(p)/.subscribe() — Relay
- *   BAIT.Input.actions()/.rebind(id, cb)   — Forge
- *   BAIT.Audio.setVolume(v)                — Ink
- *   BAIT.Chapters.chapters                 — Atlas
+ *   Consumes (defensively, so a missing module degrades instead of throwing):
+ *   BAIT.Modes.go/push/pop/back/ctx/state         — Relay
+ *   BAIT.Save.get()/.change(fn)                   — Relay
+ *   BAIT.Play.beginCampaign(id)/restart/session   — Boss
+ *   BAIT.Input.ACTIONS/bindings()/capture/rebind  — Forge
+ *   BAIT.Chapters.list/plannedTotal               — Atlas
+ *   BAIT.Daily.status/dayNumber/LIVES, BAIT.Share — Relay
+ *   BAIT.Gauntlet.today()/start()                 — Relay (run controller, pending)
+ *   BAIT.Audio.setVolume(v)                       — Ink
  *
- * results data: { kind:'campaign'|'gauntlet'|'room', cleared, timeTicks,
- *   parTicks, deaths, tokenTaken, medals:{clear,clean,swift,token},
- *   heldMedals:{...}, lines:[..], shareText, onRetry, onNext, onBack }
- * pause data:   { onResume, onRetry, onQuit }
+ * results data: either play.js's run summary { roomId, origin, room, medals,
+ *   ticks, deaths, par, replay } (normalized here), or the native shape
+ *   { kind, cleared, timeTicks, parTicks, deaths, medals:{clear,clean,swift,
+ *     token}, heldMedals, roomLabel, lines:[..], shareText, onRetry, onNext,
+ *     onBack }
+ * pause data: { onResume, onRetry, onQuit } — all optional; without them the
+ *   screen drives BAIT.Modes / BAIT.Play directly, which is the shipping path.
  */
 (function (BAIT) {
   'use strict';
@@ -63,19 +69,52 @@
     return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
   }
 
+  /* Key bindings are stored as KeyboardEvent.code; shown as stencil.
+   * KeyW -> W, ArrowUp -> UP, Escape -> ESC. */
+  function prettyCode(code) {
+    if (!code) return '—';
+    if (code.slice(0, 3) === 'Key') return code.slice(3);
+    if (code.slice(0, 5) === 'Digit') return code.slice(5);
+    if (code.slice(0, 5) === 'Arrow') return code.slice(5).toUpperCase();
+    if (code === 'Escape') return 'ESC';
+    return code.toUpperCase();
+  }
+  function codesLabel(codes) {
+    if (!codes || !codes.length) return '—';
+    var out = [];
+    for (var i = 0; i < codes.length; i++) out.push(prettyCode(codes[i]));
+    return out.join(' / ');
+  }
+
   /* ------------------------------------------- defensive owner adapters -- */
 
-  /* Relay's mode machine. Until it exists, fall back so screens still nav. */
+  /* Relay's mode machine. go() returns FALSE on an unknown state or an
+   * illegal transition, and that must fall through to the fallback —
+   * reporting success because the function merely exists is how the
+   * campaign button died silently (Boss, #bait build). */
   function modesGo(name, data, fallback) {
     var M = BAIT.Modes;
-    var f = M && (M.go || M.to || M.enter);
-    if (f) { f.call(M, name, data); return true; }
+    if (M && M.go) { if (M.go(name, data)) return true; }
     if (fallback) { fallback(); return true; }
-    setStatus('MODULE NOT LOADED: MODES');
+    setStatus('CANNOT OPEN: ' + String(name).toUpperCase());
     return false;
   }
 
-  /* Relay's save. Local fallback doc so settings work before save.js lands. */
+  /* Overlays (settings over title, settings over pause) go through push so
+   * Esc unwinds them in order via Modes.back(). */
+  function modesPush(name, fallback) {
+    var M = BAIT.Modes;
+    if (M && M.push) { if (M.push(name)) return true; }
+    if (fallback) { fallback(); return true; }
+    return false;
+  }
+
+  /* Relay's save (src/game/save.js). One versioned document: settings live
+   * at doc.settings with the colourblind flag spelled colorAssist, medals at
+   * doc.campaign.rooms[roomId].medals. Save.patch takes a DOT-PATH and one
+   * value, so multi-field writes go through Save.change(fn) — passing an
+   * object to patch is a TypeError. The local doc exists only so a harness
+   * without save.js still functions. */
   var localDoc = null;
   function defaultSettings() {
     var prefersReduced = false;
@@ -83,13 +122,16 @@
       prefersReduced = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch (e) {}
-    return { volume: 0.8, ghosts: true, reducedMotion: prefersReduced,
-             colourblind: false };
+    return { volume: 0.8, muted: false, ghosts: true,
+             reducedMotion: prefersReduced, colorAssist: false, keys: {} };
   }
   function saveDoc() {
     var S = BAIT.Save;
     if (S && S.get) { var d = S.get(); if (d) return d; }
-    if (!localDoc) localDoc = { settings: defaultSettings(), campaign: {} };
+    if (!localDoc) {
+      localDoc = { settings: defaultSettings(),
+                   campaign: { rooms: {} }, daily: { history: {} } };
+    }
     return localDoc;
   }
   function settings() {
@@ -100,23 +142,46 @@
     return s;
   }
   function patchSettings(part) {
-    var s = settings(), k;
-    for (k in part) if (Object.prototype.hasOwnProperty.call(part, k)) s[k] = part[k];
-    var S = BAIT.Save;
-    if (S && S.patch) S.patch({ settings: s });
-    applySettings(s);
+    var S = BAIT.Save, k;
+    if (S && S.change) {
+      S.change(function (doc) {
+        if (!doc.settings) doc.settings = defaultSettings();
+        for (k in part) {
+          if (Object.prototype.hasOwnProperty.call(part, k)) {
+            doc.settings[k] = part[k];
+          }
+        }
+      }, 'settings');
+    } else {
+      var s = settings();
+      for (k in part) {
+        if (Object.prototype.hasOwnProperty.call(part, k)) s[k] = part[k];
+      }
+    }
+    applySettings();
   }
 
-  /* Push saved settings into the modules that act on them. Boot calls this
-   * once; the settings screen calls it on every change. */
+  /* Push saved settings into the modules that act on them. Called once when
+   * the first screen is built (boot does not do this itself) and again on
+   * every change from the settings screen. Also re-applies saved key
+   * bindings, which otherwise die with the session. */
   function applySettings(s) {
     if (!s) s = settings();
     if (BAIT.Theme) {
-      BAIT.Theme.setOption('colourblind', !!s.colourblind);
+      BAIT.Theme.setOption('colourblind', !!s.colorAssist);
       BAIT.Theme.setOption('reducedMotion', !!s.reducedMotion);
     }
     var A = BAIT.Audio;
-    if (A && A.setVolume) A.setVolume(s.volume);
+    if (A && A.setVolume) A.setVolume(s.muted ? 0 : s.volume);
+    var I = BAIT.Input, k;
+    if (I && I.rebind && s.keys) {
+      for (k in s.keys) {
+        if (Object.prototype.hasOwnProperty.call(s.keys, k)) {
+          try { I.rebind(s.keys); } catch (e) {}
+          break;
+        }
+      }
+    }
   }
 
   /* Atlas's campaign. */
@@ -132,7 +197,8 @@
   }
   function medalsOf(key) {
     var doc = saveDoc();
-    var rec = doc.campaign && doc.campaign[key];
+    var rooms = doc.campaign && (doc.campaign.rooms || doc.campaign);
+    var rec = rooms ? rooms[key] : null;
     return (rec && (rec.medals || rec.m)) || {};
   }
   function countMedals(m) {
@@ -147,6 +213,14 @@
         have += countMedals(medalsOf(roomKey(ci, ri, rooms[ri])));
       }
     }
+    /* The campaign denominator is the PLANNED size (81 rooms, 324 medals),
+     * not just the chapters authored so far — Atlas's gate numbers (211 of
+     * the 264 before chapter 6) are stated against the full plan and the
+     * header must agree with them. */
+    var C = BAIT.Chapters;
+    if (C && C.plannedTotal) {
+      possible = C.plannedTotal() * (C.MEDALS_PER_ROOM || 4);
+    }
     return { have: have, possible: possible };
   }
 
@@ -156,9 +230,12 @@
   function copyText(text, done) {
     var Sh = BAIT.Share;
     if (Sh && Sh.copy) {
-      var r = Sh.copy(text, done);
-      if (r && typeof r.then === 'function') r.then(function () { done(true); },
-                                                    function () { done(false); });
+      /* Share.copy resolves TRUE only when the text really landed on the
+       * clipboard; resolving false is a failure, not a success. */
+      var r = Sh.copy(text);
+      if (r && typeof r.then === 'function') {
+        r.then(function (ok) { done(ok !== false); }, function () { done(false); });
+      } else done(r !== false);
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -328,10 +405,22 @@
       ' text-align:center;color:var(--c-chalk);}',
       '.scr-bind-key.waiting{border-color:var(--c-brass);color:var(--c-brass);}',
 
-      /* ---- HUD ---- */
+      /* ---- gauntlet ---- */
+      '.scr-g-slots{display:flex;gap:10px;}',
+      '.scr-g-slot{width:26px;height:26px;border:1px solid var(--c-rule-strong);',
+      ' display:flex;align-items:center;justify-content:center;',
+      ' font-family:var(--font-mono);font-size:var(--t-micro);',
+      ' color:var(--c-chalk-faint);box-sizing:border-box;}',
+      '.scr-g-slot.done{border-color:var(--c-chalk);color:var(--c-chalk);}',
+      '.scr-g-slot.cur{border-color:var(--c-brass);color:var(--c-brass);}',
+      '.scr-g-lives{display:flex;gap:6px;align-items:center;}',
+
+      /* ---- HUD ----
+       * The default position is a fallback; hud.js fits the strip into the
+       * canvas plate's top margin from the real stage rect on show/resize. */
       '#frame-hud{position:fixed;top:0;left:50%;transform:translateX(-50%);',
       ' width:min(1000px,100vw);display:none;justify-content:space-between;',
-      ' align-items:baseline;padding:12px 28px;box-sizing:border-box;z-index:10;',
+      ' align-items:center;padding:0 6px;box-sizing:border-box;z-index:10;',
       ' pointer-events:none;font-family:var(--font-mono);}',
       '#frame-hud.open{display:flex;}',
       '.hud-side{display:flex;gap:26px;align-items:baseline;}',
@@ -477,6 +566,9 @@
     container.id = 'frame-screens';
     ui.appendChild(container);
     document.addEventListener('keydown', onDocKey, true);
+    /* Boot loads the save but applies nothing from it; the first screen
+     * build is the earliest moment this file can do it instead. */
+    applySettings();
   }
 
   function setStatus(text) {
@@ -488,9 +580,17 @@
   function showInternal(name, data, isBack) {
     ensure();
     var build = BUILDERS[name];
-    if (!build) return;
+    if (!build) {
+      /* A menu item that dies without a word cost us a whole mode. */
+      if (typeof console !== 'undefined') {
+        console.warn('BAIT.Screens: unknown screen "' + name + '"');
+      }
+      return;
+    }
     if (current) {
-      if (!isBack) stack.push({ name: current.name, data: current.data });
+      /* When Relay's Modes exists IT owns history (boot re-shows screens on
+       * every transition); a local stack would just grow stale duplicates. */
+      if (!isBack && !BAIT.Modes) stack.push({ name: current.name, data: current.data });
       container.removeChild(current.elRoot);
       current = null;
     } else {
@@ -517,9 +617,14 @@
     if (current) { container.removeChild(current.elRoot); current = null; }
     stack.length = 0;
     container.className = '';
+    container.style.background = '';
   }
 
+  /* Modes.back() is THE Esc handler for the whole game (Relay's design);
+   * the local stack exists only for a harness with no mode machine. */
   function back() {
+    var M = BAIT.Modes;
+    if (M && M.back) { M.back(); return; }
     var prev = stack.pop();
     if (prev) showInternal(prev.name, prev.data, true);
     else hide();
@@ -528,7 +633,18 @@
   function isOpen() { return !!current; }
 
   function onDocKey(e) {
-    if (!current || e.defaultPrevented) return;
+    if (e.defaultPrevented) return;
+    var M = BAIT.Modes;
+    if (!current) {
+      /* No screen open: Esc during a live run opens the pause overlay.
+       * Modes.push guards double-pushes, so a second handler is harmless. */
+      if (e.key === 'Escape' && M && M.state && M.state() === 'playing' &&
+          M.overlay && !M.overlay()) {
+        e.preventDefault();
+        M.back();
+      }
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       if (current.onEsc) current.onEsc();
@@ -654,7 +770,8 @@
 
   /* --------------------------------------------------------------- TITLE -- */
 
-  BUILDERS.title = function () {
+  BUILDERS.title = function (d) {
+    d = d || {};
     var scr = el('section', 'scr scr-title');
     scr.setAttribute('aria-label', 'Title');
     addPlateFurniture(scr);
@@ -666,25 +783,32 @@
     var menu = el('nav', 'scr-menu');
     menu.setAttribute('aria-label', 'Main menu');
 
+    /* Relay's base state for the campaign is 'chapters' — there is no
+     * 'campaign' state and go() rejects unknown names. */
     var mCampaign = menuItem('01', 'Campaign', 'six chapters', function () {
-      modesGo('campaign', null, function () { show('chapters'); });
+      modesGo('chapters', null, function () { show('chapters'); });
     });
     mCampaign.setAttribute('data-autofocus', '');
     menu.appendChild(mCampaign);
-    menu.appendChild(menuItem('02', 'Daily Gauntlet', 'No. ' + todaySeed(), function () {
-      modesGo('gauntlet', null, null);
+    var D = BAIT.Daily;
+    var dayNo = (D && D.dayNumber && D.todaySeed)
+      ? D.dayNumber(D.todaySeed()) : todaySeed();
+    menu.appendChild(menuItem('02', 'Daily Gauntlet', 'No. ' + dayNo, function () {
+      modesGo('gauntlet', null, function () { show('gauntlet'); });
     }));
     menu.appendChild(menuItem('03', 'Workshop', 'build · prove · share', function () {
       modesGo('workshop', null, null);
     }));
     menu.appendChild(menuItem('04', 'Settings', 'audio · display · keys', function () {
-      show('settings');
+      modesPush('settings', function () { show('settings'); });
     }));
     attachListNav(menu, false);
     inner.appendChild(menu);
 
     statusEl = el('p', 'scr-micro scr-status', '');
     inner.appendChild(statusEl);
+    /* boot lands here with a notice when a #r= link was invalid */
+    if (d.notice) setStatus(d.notice);
     scr.appendChild(inner);
 
     var foot = el('div', 'scr-foot');
@@ -759,13 +883,23 @@
         main.appendChild(lock);
         return;
       }
+      var rooms = ch.rooms || [];
+      if (!rooms.length) {
+        var soon = el('div', 'scr-lockplate');
+        soon.style.flex = '1';
+        soon.appendChild(el('span', 'scr-h2', 'In drafting'));
+        soon.appendChild(el('span', 'scr-micro',
+          'the rooms for this chapter are not authored yet'));
+        main.appendChild(soon);
+        return;
+      }
       var grid = el('div', 'scr-rooms');
       grid.setAttribute('aria-label', (ch.title || ch.name || 'Chapter ' + (ci + 1)) + ' rooms');
-      var rooms = ch.rooms || [];
       for (var ri = 0; ri < rooms.length; ri++) {
         (function (ri) {
           var room = rooms[ri];
-          var m = medalsOf(roomKey(ci, ri, room));
+          var id = roomKey(ci, ri, room);
+          var m = medalsOf(id);
           var b = el('button', 'scr-room');
           var num = (ri + 1 < 10 ? '0' : '') + (ri + 1);
           b.appendChild(el('span', 'scr-room-num', num));
@@ -779,7 +913,18 @@
             'Room ' + (ri + 1) + (room.name ? ' — ' + room.name : '') +
             ', ' + countMedals(m) + ' of 4 medals');
           b.addEventListener('click', function () {
-            modesGo('play', { source: 'campaign', chapter: ci, room: ri }, null);
+            /* Boss's entry point. It parses the grid, stamps par and attaches
+             * the saved ghost; FALSE means the room is unknown or its grid
+             * failed to parse, which must cost a status line, not a dead
+             * click. */
+            var P = BAIT.Play;
+            if (P && P.beginCampaign) {
+              if (!P.beginCampaign(id)) {
+                setStatus('ROOM ' + id + ' DID NOT LOAD — ITS GRID FAILED TO PARSE');
+              }
+            } else {
+              setStatus('PLAY MODULE NOT LOADED');
+            }
           });
           grid.appendChild(b);
         })(ri);
@@ -803,7 +948,8 @@
           have += countMedals(medalsOf(roomKey(ci, ri, rooms[ri])));
         }
         b.appendChild(el('span', 'scr-tab-count',
-          chapterLocked(ci) ? 'LOCKED' : have + '/' + rooms.length * 4));
+          chapterLocked(ci) ? 'LOCKED'
+            : (rooms.length ? have + '/' + rooms.length * 4 : '—')));
         b.addEventListener('click', function () { renderRooms(ci); });
         b.addEventListener('focus', function () { renderRooms(ci); });
         if (ci === Math.min(lastChapter, chapters.length - 1)) b.setAttribute('data-autofocus', '');
@@ -841,14 +987,240 @@
     }
     scr.appendChild(legend);
 
+    statusEl = el('p', 'scr-micro scr-status', '');
+    statusEl.setAttribute('role', 'status');
+    scr.appendChild(statusEl);
+
     renderRooms(Math.min(lastChapter, chapters.length - 1));
 
     return { elRoot: scr, overlay: false };
   };
 
+  /* ------------------------------------------------------------- GAUNTLET --
+   * The daily gauntlet lobby. Relay owns the RUN — sequencing, lives, the
+   * one-run-per-seed rule, the share string — behind BAIT.Gauntlet; this
+   * screen only reads state and starts/resumes. Read API proposed to Relay
+   * in #bait build:
+   *
+   *   BAIT.Gauntlet.today() -> {
+   *     seed, dayNumber,
+   *     state: 'fresh' | 'active' | 'done',
+   *     livesLeft,            // int, of Daily.LIVES
+   *     roomIndex,            // 0-based room being played, when active
+   *     cleared,              // rooms cleared so far, 0..5
+   *     result,               // {cleared, deaths, ticks, parTicks}|null
+   *     shareText,            // final result string, when done
+   *     yesterday }           // {seed, result, shareText}|null
+   *   BAIT.Gauntlet.start() -> boolean   (begin fresh, or resume active)
+   *
+   * Until that lands this degrades to BAIT.Daily.status(), which is read
+   * only — the screen renders and says the run controller is pending.
+   */
+
+  function gauntletToday() {
+    var G = BAIT.Gauntlet;
+    if (G && G.today) { try { return G.today(); } catch (e) {} }
+    var D = BAIT.Daily;
+    if (D && D.status && BAIT.Save) {
+      try {
+        var st = D.status(D.todaySeed());
+        var yd = new Date(); yd.setDate(yd.getDate() - 1);
+        var yseed = yd.getFullYear() * 10000 + (yd.getMonth() + 1) * 100 + yd.getDate();
+        var yst = D.status(yseed);
+        return {
+          seed: st.seed, dayNumber: st.dayNumber,
+          state: st.done ? 'done' : (st.started ? 'active' : 'fresh'),
+          livesLeft: null, roomIndex: null,
+          cleared: st.result ? (st.result.cleared | 0) : null,
+          result: st.result, shareText: null,
+          yesterday: (yst && yst.done) ? { seed: yseed, result: yst.result } : null
+        };
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  function gauntletShareText(t) {
+    if (!t) return null;
+    if (t.shareText) return t.shareText;
+    var Sh = BAIT.Share, r = t.result;
+    if (Sh && Sh.gauntletString && r) {
+      return Sh.gauntletString({ seed: t.seed, cleared: r.cleared,
+        deaths: r.deaths, ticks: r.ticks, parTicks: r.parTicks });
+    }
+    return null;
+  }
+
+  BUILDERS.gauntlet = function () {
+    var scr = el('section', 'scr');
+    scr.setAttribute('aria-label', 'Daily gauntlet');
+    var panel = el('div', 'scr-panel');
+
+    var t = gauntletToday();
+
+    panel.appendChild(el('h1', 'scr-h2', 'Daily Gauntlet'));
+    panel.appendChild(el('p', 'scr-micro',
+      (t ? 'No. ' + t.dayNumber + ' · ' : '') +
+      'the same five rooms for everyone, today only'));
+
+    /* the five slots */
+    var slots = el('div', 'scr-g-slots');
+    slots.setAttribute('role', 'img');
+    for (var i = 0; i < 5; i++) {
+      var sl = el('span', 'scr-g-slot', String(i + 1));
+      if (t) {
+        if (t.cleared != null && i < t.cleared) sl.className += ' done';
+        else if (t.state === 'active' && t.roomIndex === i) sl.className += ' cur';
+      }
+      slots.appendChild(sl);
+    }
+    slots.setAttribute('aria-label', 'Rooms cleared: ' +
+      ((t && t.cleared != null) ? t.cleared : 0) + ' of 5');
+    panel.appendChild(slots);
+
+    /* lives — for the WHOLE run, not per room */
+    var total = (BAIT.Daily && BAIT.Daily.LIVES) || 3;
+    var left = (t && t.livesLeft != null) ? t.livesLeft : total;
+    var livesRow = el('div', 'scr-row');
+    livesRow.appendChild(el('span', 'scr-label', 'lives'));
+    var lives = el('span', 'scr-g-lives');
+    lives.setAttribute('role', 'img');
+    lives.setAttribute('aria-label', left + ' of ' + total + ' lives');
+    for (i = 0; i < total; i++) lives.appendChild(pip(i < left ? 'on' : '', false));
+    livesRow.appendChild(lives);
+    panel.appendChild(livesRow);
+
+    panel.appendChild(el('hr', 'scr-rule'));
+    panel.appendChild(el('pre', 'scr-lines',
+      'five rooms, in order, one continuous run\n' +
+      total + ' lives for the whole run, not per room\n' +
+      'one run per day. tomorrow is a new drawing'));
+    panel.appendChild(el('hr', 'scr-rule'));
+
+    var actions = el('div', 'scr-actions');
+    if (t && t.state === 'done') {
+      var txt = gauntletShareText(t);
+      panel.appendChild(el('pre', 'scr-lines', txt || 'run complete'));
+      if (txt) {
+        var cb = actionBtn('Copy result', '', function () {
+          copyText(txt, function (ok) {
+            cb.firstChild.textContent = ok ? 'Copied' : 'Copy failed';
+          });
+        });
+        cb.setAttribute('data-autofocus', '');
+        actions.appendChild(cb);
+      }
+    } else {
+      var canStart = !!(BAIT.Gauntlet && BAIT.Gauntlet.start);
+      var resuming = t && t.state === 'active';
+      var go = actionBtn(resuming ? 'Resume run' : 'Begin run',
+        (resuming && t.roomIndex != null) ? 'room ' + (t.roomIndex + 1) + ' of 5' : '',
+        function () {
+          if (!canStart) { setStatus('RUN CONTROLLER NOT LOADED'); return; }
+          if (!BAIT.Gauntlet.start()) setStatus('GAUNTLET COULD NOT START');
+        });
+      go.setAttribute('data-autofocus', '');
+      if (!canStart) go.setAttribute('aria-disabled', 'true');
+      actions.appendChild(go);
+    }
+    actions.appendChild(actionBtn('Back', 'ESC', back));
+    attachListNav(actions, true);
+    panel.appendChild(actions);
+
+    var y = t && t.yesterday;
+    var ytxt = y ? (y.shareText || gauntletShareText(y)) : null;
+    if (ytxt) {
+      panel.appendChild(el('hr', 'scr-rule'));
+      panel.appendChild(el('h2', 'scr-label', 'yesterday'));
+      panel.appendChild(el('pre', 'scr-lines', ytxt));
+    }
+
+    statusEl = el('p', 'scr-micro scr-status', '');
+    statusEl.setAttribute('role', 'status');
+    panel.appendChild(statusEl);
+
+    scr.appendChild(panel);
+    return { elRoot: scr, overlay: false };
+  };
+
   /* ------------------------------------------------------------- RESULTS -- */
 
+  /* Flat campaign order, for the Next button: the id of the room after this
+   * one, or null at the end of the authored rooms or when the next room sits
+   * behind a still-shut chapter gate. */
+  function nextCampaignId(roomId) {
+    var chapters = campaignChapters();
+    if (!chapters || roomId == null) return null;
+    var totals = medalTotals(chapters);
+    var flat = [];
+    for (var ci = 0; ci < chapters.length; ci++) {
+      var rooms = chapters[ci].rooms || [];
+      for (var ri = 0; ri < rooms.length; ri++) {
+        flat.push({ id: roomKey(ci, ri, rooms[ri]),
+                    unlock: chapters[ci].unlock || 0 });
+      }
+    }
+    for (var i = 0; i < flat.length - 1; i++) {
+      if (flat[i].id === String(roomId)) {
+        return totals.have >= flat[i + 1].unlock ? flat[i + 1].id : null;
+      }
+    }
+    return null;
+  }
+
+  /* Retry from results: the session is still alive (play.js never stops it
+   * here), so restart() and step back into 'playing'. A dead session falls
+   * back to beginning the room over from its id. */
+  function retryFromResults(d) {
+    var P = BAIT.Play, M = BAIT.Modes;
+    if (P && P.restart && P.session && P.session() && M && M.go) {
+      if (P.restart()) {
+        M.go('playing', { origin: d.origin, roomId: d.roomId,
+                          originCtx: (M.ctx() || {}).originCtx });
+        return;
+      }
+    }
+    if (P && P.beginCampaign && d.origin === 'campaign' && d.roomId) {
+      P.beginCampaign(d.roomId);
+    }
+  }
+
+  /* play.js hands Modes a run summary { roomId, origin, room, medals, ticks,
+   * deaths, par, replay } and boot routes it here untouched. Fold it into
+   * the shape this screen is built around; data already in that shape (a
+   * harness, or Relay's future gauntlet results) passes through unchanged. */
+  function normalizeResults(raw) {
+    var d = raw || {};
+    if (d.timeTicks != null || d.ticks == null) return d;
+    var m = d.medals || {};
+    var nextId = d.origin === 'campaign' ? nextCampaignId(d.roomId) : null;
+    return {
+      kind: d.origin === 'gauntlet' ? 'gauntlet'
+        : (d.origin === 'campaign' ? 'campaign' : 'room'),
+      cleared: !!m.clear,
+      timeTicks: d.ticks,
+      parTicks: d.par != null ? d.par : null,
+      deaths: d.deaths | 0,
+      medals: m,
+      /* recordRun has already merged this run into the save, so the saved
+       * medals ARE the held set; rows earned now read as earned first. */
+      heldMedals: d.roomId ? medalsOf(String(d.roomId)) : {},
+      roomLabel: d.room
+        ? ((d.room.id ? d.room.id + ' — ' : '') + (d.room.name || ''))
+        : (d.roomId || ''),
+      onRetry: function () { retryFromResults(d); },
+      onNext: nextId ? function () {
+        var P = BAIT.Play;
+        if (P && P.beginCampaign && !P.beginCampaign(nextId)) {
+          setStatus('ROOM ' + nextId + ' DID NOT LOAD');
+        }
+      } : null,
+      onBack: null
+    };
+  }
+
   BUILDERS.results = function (d) {
+    d = normalizeResults(d);
     var scr = el('section', 'scr');
     scr.setAttribute('aria-label', 'Results');
     var panel = el('div', 'scr-panel');
@@ -857,6 +1229,9 @@
 
     var verdict = d.cleared ? 'Cleared' : (d.kind === 'gauntlet' ? 'Out of lives' : 'Caught');
     panel.appendChild(el('h1', 'scr-h1', verdict));
+    if (d.roomLabel) {
+      panel.appendChild(el('p', 'scr-micro', String(d.roomLabel).toUpperCase()));
+    }
 
     var timeRow = el('div', 'scr-row');
     timeRow.appendChild(el('span', 'scr-label', 'time'));
@@ -885,8 +1260,9 @@
           d.medals.clean ? '' : (d.deaths ? d.deaths + (d.deaths === 1 ? ' death' : ' deaths') : 'zero deaths')],
         ['swift', 'Swift', false,
           d.medals.swift ? '' :
-            (d.parTicks != null && d.timeTicks != null && d.cleared
-              ? 'missed by ' + fmtDelta(d.timeTicks - d.parTicks) : 'inside par')],
+            (d.parTicks == null ? 'no par time'
+              : (d.timeTicks != null && d.cleared
+                ? 'missed by ' + fmtDelta(d.timeTicks - d.parTicks) : 'inside par'))],
         ['token', 'Token', true, d.medals.token ? '' : 'left behind']
       ];
       for (var i = 0; i < rows.length; i++) {
@@ -930,8 +1306,10 @@
     panel.appendChild(actions);
 
     scr.appendChild(panel);
+    /* overlay: play.js keeps rendering the cleared room during 'results',
+     * so the board stays visible under the scrim rather than being blanked. */
     return {
-      elRoot: scr, overlay: false,
+      elRoot: scr, overlay: true,
       onEsc: function () { if (d.onBack) { hide(); d.onBack(); } else back(); },
       onKey: function (e) {
         var k = e.key.toLowerCase();
@@ -944,6 +1322,34 @@
   /* --------------------------------------------------------------- PAUSE -- */
 
   BUILDERS.pause = function (d) {
+    d = d || {};
+    var M = BAIT.Modes, P = BAIT.Play;
+
+    /* boot pushes this overlay with an empty ctx, so the defaults drive the
+     * real machine: pop the overlay to resume, Play.restart for a fresh
+     * attempt, and quit lands wherever this run came from. */
+    function resume() {
+      hide();
+      if (d.onResume) d.onResume();
+      else if (M && M.pop) M.pop();
+    }
+    function retryRoom() {
+      hide();
+      if (d.onRetry) { d.onRetry(); return; }
+      if (P && P.restart && P.restart() && M && M.pop) M.pop();
+    }
+    var dest = 'title';
+    if (M && M.ctx && M.ORIGIN_HOME) {
+      dest = M.ORIGIN_HOME[(M.ctx() || {}).origin] || 'title';
+    }
+    function quit() {
+      hide();
+      if (d.onQuit) d.onQuit();
+      else if (M && M.go) M.go(dest);
+      else show('title');
+    }
+    var canRetry = !!(d.onRetry || (P && P.restart));
+
     var scr = el('section', 'scr');
     scr.setAttribute('aria-label', 'Paused');
     var panel = el('div', 'scr-panel');
@@ -954,14 +1360,11 @@
     var menu = el('div', 'scr-menu');
     menu.style.borderTop = 'none';
     menu.style.paddingTop = '0';
-    function resume() { hide(); if (d.onResume) d.onResume(); }
     var mi = menuItem('01', 'Resume', 'esc', resume);
     mi.setAttribute('data-autofocus', '');
     menu.appendChild(mi);
-    if (d.onRetry) {
-      menu.appendChild(menuItem('02', 'Retry room', 'r', function () {
-        hide(); d.onRetry();
-      }));
+    if (canRetry) {
+      menu.appendChild(menuItem('02', 'Retry room', 'r', retryRoom));
     }
     var ghostRow = el('div', 'scr-set-row');
     ghostRow.style.padding = '0 16px';
@@ -971,11 +1374,9 @@
       function (v) { patchSettings({ ghosts: v }); }));
     menu.appendChild(ghostRow);
     menu.appendChild(menuItem('03', 'Settings', '', function () {
-      show('settings');
+      modesPush('settings', function () { show('settings'); });
     }));
-    menu.appendChild(menuItem('04', 'Quit to title', '', function () {
-      hide(); if (d.onQuit) d.onQuit(); else show('title');
-    }));
+    menu.appendChild(menuItem('04', 'Quit to ' + dest, '', quit));
     attachListNav(menu, false);
     panel.appendChild(menu);
     scr.appendChild(panel);
@@ -984,8 +1385,8 @@
       elRoot: scr, overlay: true,
       onEsc: resume,
       onKey: function (e) {
-        if (e.key.toLowerCase() === 'r' && d.onRetry) {
-          e.preventDefault(); hide(); d.onRetry();
+        if (e.key.toLowerCase() === 'r' && canRetry) {
+          e.preventDefault(); retryRoom();
         }
       }
     };
@@ -1031,44 +1432,54 @@
     panel.appendChild(setRow('reduced motion',
       function () { return !!settings().reducedMotion; },
       function (v) { patchSettings({ reducedMotion: v }); }));
+    /* stored as colorAssist — Relay's save schema name for this flag */
     panel.appendChild(setRow('colourblind-safe hazards',
-      function () { return !!settings().colourblind; },
-      function (v) { patchSettings({ colourblind: v }); }));
+      function () { return !!settings().colorAssist; },
+      function (v) { patchSettings({ colorAssist: v }); }));
 
-    /* key bindings */
+    /* key bindings — Forge's API: bindings() -> {action: [codes]},
+     * capture(cb) hands over the next keypress, rebind(map) applies. A
+     * rebind REPLACES the action's codes with the captured one, and the
+     * whole map persists under settings.keys (applySettings re-applies it
+     * at boot, since nothing else does). */
     panel.appendChild(el('hr', 'scr-rule'));
     panel.appendChild(el('h2', 'scr-label', 'key bindings'));
     var I = BAIT.Input;
-    var actions = (I && I.actions) ? I.actions() : null;
-    if (!actions || !actions.length) {
+    var cancelCapture = null;
+    var canBind = !!(I && I.bindings && I.capture && I.rebind && I.bindings());
+    if (!canBind) {
       panel.appendChild(el('p', 'scr-micro',
         I ? 'this input module does not expose rebinding'
           : 'input module not loaded'));
     } else {
-      for (var i = 0; i < actions.length; i++) {
+      var order = I.ACTIONS || [];
+      for (var i = 0; i < order.length; i++) {
         (function (a) {
           var row = el('div', 'scr-set-row scr-bind');
-          row.appendChild(el('span', 'scr-label scr-set-name', a.label || a.id));
-          var keyEl = el('span', 'scr-bind-key', a.key || '—');
+          row.appendChild(el('span', 'scr-label scr-set-name', a));
+          var keyEl = el('span', 'scr-bind-key', codesLabel(I.bindings()[a]));
           var rb = actionBtn('Rebind', '', function () {
+            if (cancelCapture) cancelCapture();
             keyEl.textContent = 'PRESS KEY';
             keyEl.className = 'scr-bind-key waiting';
-            function done(newKey) {
+            cancelCapture = function () {
+              cancelCapture = null;
               keyEl.className = 'scr-bind-key';
-              keyEl.textContent = newKey || a.key || '—';
-              if (newKey) a.key = newKey;
-            }
-            try {
-              var r = I.rebind(a.id, done);
-              if (r && typeof r.then === 'function') {
-                r.then(done, function () { done(null); });
-              }
-            } catch (e) { done(null); }
+              keyEl.textContent = codesLabel(I.bindings()[a]);
+            };
+            I.capture(function (code) {
+              var m = I.bindings();
+              m[a] = [code];
+              I.rebind(m);
+              patchSettings({ keys: I.bindings() });
+              if (cancelCapture) cancelCapture();
+            });
           });
+          rb.setAttribute('aria-label', 'Rebind ' + a);
           row.appendChild(keyEl);
           row.appendChild(rb);
           panel.appendChild(row);
-        })(actions[i]);
+        })(order[i]);
       }
     }
 
@@ -1080,7 +1491,15 @@
     panel.appendChild(actionsRow);
     scr.appendChild(panel);
 
-    return { elRoot: scr, overlay: false };
+    return {
+      elRoot: scr, overlay: false,
+      /* first Esc cancels a pending capture (input.js has already dropped
+       * it on its side), second Esc leaves the screen */
+      onEsc: function () {
+        if (cancelCapture) { cancelCapture(); return; }
+        back();
+      }
+    };
   };
 
   /* --------------------------------------------------------------- expose -- */

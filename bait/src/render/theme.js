@@ -204,6 +204,12 @@
     root.style.setProperty('--t-small', T.small + 'px');
     root.style.setProperty('--t-label', T.label + 'px');
     root.style.setProperty('--t-micro', T.micro + 'px');
+    /* Stroke weights, so a DOM border and a canvas line are the same 2px.
+     * style.css referenced --rule-w before this existed and silently fell back
+     * to its own literal, which is exactly the drift this file is meant to
+     * prevent. */
+    root.style.setProperty('--rule-w', M.LINE + 'px');
+    root.style.setProperty('--hair-w', M.HAIR + 'px');
     root.style.setProperty('--track-label', T.trackLabel + 'em');
     root.style.setProperty('--track-wordmark', T.trackWordmark + 'em');
     root.setAttribute('data-plate', state.plate);
@@ -289,6 +295,49 @@
       }
       return { ox: M.ROOM_X, oy: M.ROOM_Y, cell: M.CELL, scale: scale,
                w: K.GRID_W, h: K.GRID_H };
+    },
+
+    /* Publish the board's LIVE screen rectangle as custom properties, so DOM
+     * chrome can be positioned on the plate in pure CSS.
+     *
+     * This exists because of a real bug. style.css letterboxes the 1000x700
+     * board inside the viewport, so the board's top-left is not the viewport's
+     * top-left and its scale is almost never 1. Any chrome positioned in
+     * viewport pixels (top:0, width:min(1000px,100vw)) therefore lines up with
+     * the plate at exactly ONE window size and drifts off it at every other.
+     * Below 1:1 the 70px top margin shrinks and fixed-size chrome overruns
+     * into the room; on a tall window the board is pushed down and the chrome
+     * is left floating on the void above it.
+     *
+     * Published on every resize by Draw.resize():
+     *   --stage-x / --stage-y     board's top-left in the viewport
+     *   --stage-w / --stage-h     board's presented size
+     *   --stage-scale             presented px per board px (unitless)
+     *   --plate-top               height of the room's top margin, scaled
+     *   --plate-side              width of the room's side margin, scaled
+     *
+     * Type does NOT want --stage-scale applied to it. Chrome anchors to the
+     * board, labels stay at screen size — same rule as the death callout.
+     */
+    publishStage: function (canvas) {
+      if (typeof document === 'undefined') return null;
+      var rect = canvas && canvas.getBoundingClientRect
+               ? canvas.getBoundingClientRect() : null;
+      if (!rect || !rect.width || !rect.height) return null;
+      var s = rect.width / M.CANVAS_W;
+      var root = document.documentElement, set = {
+        'stage-x': rect.left + 'px',
+        'stage-y': rect.top + 'px',
+        'stage-w': rect.width + 'px',
+        'stage-h': rect.height + 'px',
+        'stage-scale': String(s),
+        'plate-top': (M.ROOM_Y * s) + 'px',
+        'plate-side': (M.ROOM_X * s) + 'px'
+      };
+      for (var k in set) if (Object.prototype.hasOwnProperty.call(set, k)) {
+        root.style.setProperty('--' + k, set[k]);
+      }
+      return set;
     },
 
     /* Client coordinates straight to a cell, or null if outside the room.

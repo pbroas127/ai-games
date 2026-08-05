@@ -28,6 +28,7 @@
   var vol = 0.7;
   var muted = false;
   var hushUntil = 0;         /* ctx-time before which nothing may sound */
+  var hushTimer = 0;         /* pending hush, cancellable if the beat is cut */
   var travelAcc = 0;         /* px travelled since the last footstep tick */
 
   var STEP_PX = 19;          /* one pencil tick per 19px of travel */
@@ -92,6 +93,11 @@
    * if it is actually total. */
   function hush(ms) {
     if (!ctx) return;
+    /* Kill any hush that was scheduled but has not landed yet. Without this a
+     * beat cut short between the impact and the hush leaves a timer with no
+     * owner, and it silences whatever screen happens to be up 70ms later.
+     * A pending hush belongs to the beat that asked for it and dies with it. */
+    if (hushTimer) { clearTimeout(hushTimer); hushTimer = 0; }
     /* `ms === undefined` rather than `ms ||` — hush(0) has to mean "clear the
      * hush", not "hush for the default half second". */
     hushUntil = ctx.currentTime + (ms === undefined ? 500 : ms) / 1000;
@@ -257,7 +263,7 @@
     body(98, 0.07, 0.3, 'square');
     var t = BAIT.Fx && BAIT.Fx.T ? BAIT.Fx.T.SILENCE : 500;
     /* the hush starts after the impact has decayed, not before it */
-    setTimeout(function () { hush(t); }, 70);
+    hushTimer = setTimeout(function () { hushTimer = 0; hush(t); }, 70);
   }
 
   /* UI. One tick for movement through a menu, one firmer for commit. */

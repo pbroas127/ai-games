@@ -164,7 +164,16 @@
     return death;
   }
 
-  function abort() { death = null; }
+  /* The half second of silence belongs to the beat. If the beat is cut short
+   * the silence has to go with it, or the room we cut TO is mute for the
+   * remainder. This matters now that a run can end on a death: out of lives
+   * plays the beat and then leaves, so something else is on screen while the
+   * hush is still counting down. */
+  function unhush() {
+    if (BAIT.Audio && BAIT.Audio.hush) BAIT.Audio.hush(0);
+  }
+
+  function abort() { death = null; unhush(); }
 
   function busy() { return death !== null; }
 
@@ -379,7 +388,7 @@
    * owner and an answer, and the answer is that we do not have any. If a
    * transition ever becomes necessary it goes here, in discrete steps, and
    * it is never longer than two frames. */
-  function cut() { stamps.length = 0; death = null; }
+  function cut() { stamps.length = 0; death = null; unhush(); }
 
   /* Reset between attempts. Called on retry: the trail must not carry across
    * a death or the next replay shows the previous life. */
@@ -387,6 +396,7 @@
     trailN = 0;
     stamps.length = 0;
     death = null;
+    unhush();
   }
 
   BAIT.Fx = {

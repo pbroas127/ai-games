@@ -629,7 +629,16 @@
   function resultLine(entry) {
     var S = Share();
     if (S && typeof S.roomLine === 'function') {
-      try { return S.roomLine(entry); } catch (err) { /* fall through */ }
+      try { return S.roomLine(entry); }
+      catch (err) {
+        /* The button still works, so the player sees nothing wrong. Say it
+         * anyway: this is share.js failing, and silence here is how it stays
+         * broken. */
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('BAIT workshop: Share.roomLine threw, using the fallback line. ' +
+                       ((err && err.message) || err));
+        }
+      }
     }
     var b = entry.best;
     return 'BAIT room ' + entry.code +

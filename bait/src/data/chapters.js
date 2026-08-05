@@ -492,22 +492,34 @@
        '#..................#',
        '####################']),
 
+    /* DENSITY PASS after Boss called this a wall of red. It was 79% pit, now
+     * 26%, and the route is byte-for-byte the same route.
+     *
+     * The trick is that only the pits TOUCHING the path do any work. They are
+     * what punishes a wide corner, and that is the whole teach. A pit eight
+     * cells off the path can never be stepped in by anybody, so it was never
+     * difficulty, it was just red. Those are walls now and the staircase reads
+     * as a stair cut through solid rock with a drop along its edge.
+     *
+     * Nothing reachable changed, so the route, the solve and the par are
+     * untouched. The wall fill is strictly outside the pit band, so no new
+     * surface is slideable and the corners are exactly as tight as they were. */
     R('1-10', 'STAIRCASE',
       'Cornering precision where every turn is one cell wide.',
       'The token ledge can only be entered from the far end of the climb.',
       ['####################',
        '#o.................#',
        '#xxxxxxxxxxx......E#',
-       '#xxxxxxxxxxx.xxxxxx#',
-       '#xxxxxxxxxxx.xxxxxx#',
-       '#xxxxxxx.....xxxxxx#',
-       '#xxxxxxx.xxxxxxxxxx#',
-       '#xxxxxxx.xxxxxxxxxx#',
-       '#xxx.....xxxxxxxxxx#',
-       '#xxx.xxxxxxxxxxxxxx#',
-       '#xxx.xxxxxxxxxxxxxx#',
-       '#S...xxxxxxxxxxxxxx#',
-       '#xxxxxxxxxxxxxxxxxx#',
+       '###########x.xxxxxx#',
+       '#######xxxxx.x######',
+       '#######x.....x######',
+       '#######x.xxxxx######',
+       '###xxxxx.x##########',
+       '###x.....x##########',
+       '###x.xxxxx##########',
+       '#xxx.x##############',
+       '#S...x##############',
+       '#xxxxx##############',
        '####################']),
 
     R('1-11', 'THE WIDE BRIDGE',
@@ -795,27 +807,52 @@
       { '7,4': { period: 12, phase: 0 }, '12,4': { period: 12, phase: 0 },
         '7,8': { period: 12, phase: 1 }, '12,8': { period: 12, phase: 1 } }),
 
-    /* DELIBERATE TOKEN/SWIFT CONFLICT. You surface one cell from the exit, in
-     * the lane, and the token is the full length of that lane away at point
-     * blank range in front of the muzzle. */
+    /* REBUILT. The first version put the exit between the player and the
+     * token, which is a Token/CLEAR conflict and rule 5 forbids it outright.
+     * Forge caught it. The exit is now nowhere near the token line.
+     *
+     * WHAT A TURRET CAN ACTUALLY DEFEND, measured against the real sim rather
+     * than assumed, because the first three rebuilds of this room all leaned
+     * on a thing that does not work:
+     *
+     *   A bullet kills within RADIUS + BULLET_R = 10px of its centre line.
+     *   A dot pinned against a wall sits CELL/2 - RADIUS = 13px off that
+     *   cell's centre line. 13 > 10, so a dot hugging either wall of a
+     *   one-cell corridor is UNHITTABLE. I have stood one in a lane for ten
+     *   full shots and it lives.
+     *
+     * So a turret does not defend a corridor you run ALONG. It defends a line
+     * you have to CROSS, because crossing puts you on the centre line whether
+     * you like it or not. Every room in this campaign that fires a turret down
+     * a lane the player runs the length of is decoration. Raised with Boss and
+     * Forge separately; this room is built so it holds either way.
+     *
+     * The exit here IS the muzzle cell, so a shot spawns inside the doorway on
+     * the beat. That is the defence and it is small and honest: you arrive on
+     * the wrong beat and the doorstep kills you.
+     *
+     * DELIBERATE TOKEN/SWIFT CONFLICT, and this time it is a real one. Clear
+     * runs 570 ticks, carrying the token runs 857. The 2.4s buys a seven-cell
+     * dead end with a pit wall on each side and no room to correct in.
+     */
     R('2-10', 'THE DOORSTEP',
       'The goal itself is defended.',
-      'The tile you want most is the most dangerous tile in the room.',
+      'The exit is the muzzle. It is open, and it is loaded.',
       ['####################',
        '####################',
        '####################',
-       '####################',
-       '####################',
-       '####################',
-       '#T.o............E..#',
-       '#################.##',
+       '#........T.........#',
+       '#........E.........#',
        '#..................#',
+       '#################..#',
        '#..................#',
-       '#..................#',
+       '#xxxxxxx...........#',
+       '#o.................#',
+       '#xxxxxxx...........#',
        '#S.................#',
-       '#..................#',
+       '####################',
        '####################'],
-      { '1,6': { dir: 3, period: 12, phase: 0 } }),
+      { '9,3': { dir: 5, period: 12, phase: 0 } }),
 
     /* THE GENTLE STATEMENT. The bridge is two faller spans with a real floor
      * island between them, and an alcove above the island that is out of the
@@ -1035,35 +1072,67 @@
    * campaign, which plannedTotal() and parComplete() both catch at verify
    * time; a chapter file that THROWS at boot is a white screen and takes the
    * whole game with it. Loud at build time, survivable at run time. */
+  /* Every addRooms throw lands here before it is rethrown. Forge's point is
+   * correct and it is the one real cost of appending: a chapter file that
+   * throws halfway registers the rooms it already got, so the chapter presents
+   * as a complete short chapter and NOTHING says otherwise. The throw itself
+   * scrolls past in a console nobody has open.
+   *
+   * The append is still right. A chapter that throws at boot is a white screen
+   * and takes the other five chapters with it. So keep the append and remove
+   * the silence instead: the failure is recorded here, and shortfall() turns
+   * "this chapter is short" into something a screen can render. */
+  var PROBLEMS = [];
+
   function addRooms(n, rooms) {
     var ch = null, i;
     for (i = 0; i < CHAPTERS.length; i++) if (CHAPTERS[i].n === n) ch = CHAPTERS[i];
-    if (!ch) throw new Error('addRooms: no chapter ' + n);
-    if (!rooms || !rooms.length) throw new Error('addRooms: chapter ' + n + ' got no rooms');
+    if (!ch) throw note(n, null, 'addRooms: no chapter ' + n);
+    if (!rooms || !rooms.length) throw note(n, null, 'addRooms: chapter ' + n + ' got no rooms');
 
     var want = PLANNED[n - 1], have = ch.rooms.length;
     if (have + rooms.length > want) {
-      throw new Error('addRooms: chapter ' + n + ' would hold ' +
-                      (have + rooms.length) + ' rooms, planned is ' + want);
+      throw note(n, null, 'addRooms: chapter ' + n + ' would hold ' +
+                          (have + rooms.length) + ' rooms, planned is ' + want);
     }
     for (i = 0; i < rooms.length; i++) {
       var r = rooms[i], seq = have + i + 1;
       var id = n + '-' + (seq < 10 ? '0' : '') + seq;
       if (r.id !== id) {
-        throw new Error('addRooms: room ' + seq + ' of chapter ' + n +
-                        ' should have id ' + id + ', has ' + r.id);
+        throw note(n, r.id, 'addRooms: room ' + seq + ' of chapter ' + n +
+                            ' should have id ' + id + ', has ' + r.id);
       }
       if (!r.lines || r.lines.length !== 14) {
-        throw new Error('addRooms: ' + r.id + ' must have 14 grid lines');
+        throw note(n, r.id, 'addRooms: ' + r.id + ' must have 14 grid lines');
       }
       if (r.par !== null && r.par !== undefined) {
-        throw new Error('addRooms: ' + r.id + ' must ship par null, the solver writes it');
+        throw note(n, r.id, 'addRooms: ' + r.id + ' must ship par null, the solver writes it');
       }
       r.params = r.params || {};
       r.par = null;
       ch.rooms.push(r);
     }
     return ch;
+  }
+
+  /* Record, shout, and hand back the Error for the caller to throw. */
+  function note(n, id, message) {
+    PROBLEMS.push({ chapter: n, at: id || null, message: message });
+    if (typeof console !== 'undefined' && console.warn) console.warn('BAIT campaign: ' + message);
+    return new Error(message);
+  }
+
+  /* Which chapters hold fewer rooms than the plan says, and by how many.
+   * Empty array means the campaign is whole. Frame can render this on chapter
+   * select and Sieve can fail a build on it; either way it stops being a
+   * console line nobody reads. */
+  function shortfall() {
+    var out = [];
+    for (var i = 0; i < CHAPTERS.length; i++) {
+      var ch = CHAPTERS[i], want = PLANNED[ch.n - 1], have = ch.rooms.length;
+      if (have !== want) out.push({ n: ch.n, title: ch.title, have: have, want: want });
+    }
+    return out;
   }
 
   BAIT.Chapters = {
@@ -1075,6 +1144,8 @@
     byId: byId,
     attach: attach,
     addRooms: addRooms,
+    problems: PROBLEMS,
+    shortfall: shortfall,
     applyPar: applyPar,
     parComplete: parComplete,
     R: R,

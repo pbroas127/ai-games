@@ -367,13 +367,24 @@
     }
 
     /* Standing still is a real tactic against a turret cadence, a rotor
-     * sweep, a phase block, or to let a conveyor carry you. In a room with
-     * none of those, nothing changes while you wait, so dir 0 can only
-     * produce states the search already has. Dropping it there removes a
-     * ninth of the branching in exactly the wide-open rooms that search
-     * worst. */
+     * sweep, a phase block, to let a conveyor carry you, or to ride a
+     * deflector launch — a launch survives only while no direction is held,
+     * so riding one means pressing nothing.
+     *
+     * In a room with none of those, nothing changes while you wait, so dir 0
+     * can only produce states the search already has. Dropping it there
+     * removes a ninth of the branching in exactly the wide-open rooms that
+     * search worst.
+     *
+     * Deflectors are in this list defensively rather than because a room
+     * fails without them: a launched dot moves at exactly SPEED, the same as
+     * a walking one, so under the current sim riding is never REQUIRED to
+     * reach anywhere. It is here so that stays true if the deflector rule
+     * changes, and because being wrong in this direction costs one branch
+     * while being wrong the other way costs an author their afternoon. */
     var timeMatters = root.turrets.length > 0 || root.rotors.length > 0 ||
-                      root.phases.length > 0 || root.conveys.length > 0;
+                      root.phases.length > 0 || root.conveys.length > 0 ||
+                      cellsOf(room, TILE.DEFLECT).length > 0;
     var DIRS = timeMatters ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [1, 2, 3, 4, 5, 6, 7, 8];
 
     var seen = {};
@@ -471,7 +482,17 @@
    * the same time (SPEC §7.5). */
   function proves(room, inputs) {
     var a = Sim.create(room), b = Sim.create(room), i;
-    for (i = 0; i < inputs.length && a.result === Sim.RESULT.RUN; i++) Sim.step(a, inputs[i]);
+    /* Peak live bullets and cap overflow, watched along the winning route.
+     * Relay's ask: if the MAX_BULLETS cap ever swallows a shot in a GENERATED
+     * room, that is not density to tune, it is the generator emitting
+     * something he did not intend, and he wants it failed against his file.
+     * Note what this window covers: the proven route, which is the ticks a
+     * player who clears actually lives through, and nothing after it. */
+    var peak = 0;
+    for (i = 0; i < inputs.length && a.result === Sim.RESULT.RUN; i++) {
+      Sim.step(a, inputs[i]);
+      if (a.bullets.length > peak) peak = a.bullets.length;
+    }
     for (i = 0; i < inputs.length && b.result === Sim.RESULT.RUN; i++) Sim.step(b, inputs[i]);
 
     if (a.result !== Sim.RESULT.CLEAR) {
@@ -481,7 +502,8 @@
     if (Sim.hash(a) !== Sim.hash(b)) {
       return { ok: false, why: 'two identical replays produced different state hashes, determinism is broken' };
     }
-    return { ok: true, ticks: a.t, hash: Sim.hash(a) };
+    return { ok: true, ticks: a.t, hash: Sim.hash(a),
+             peakBullets: peak, skipped: a.bulletsSkipped };
   }
 
   /* A room cleared by holding one direction from the start is not a room.

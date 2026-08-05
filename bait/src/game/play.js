@@ -80,6 +80,50 @@
     return true;
   }
 
+  /* Start a CAMPAIGN room by id ("2-07"). Chapter select hands us an id and
+   * nothing else, so the id-to-playable-room step has to live somewhere; it
+   * lives here rather than in the screen, because parsing the grid, stamping
+   * par and finding the saved ghost are all facts about a play session and
+   * none of them are facts about a menu. Every caller that wants to play a
+   * campaign room calls THIS — there is no second path that could disagree
+   * about which ghost or which par a room gets.
+   *
+   * Returns false rather than throwing on an unknown or unparseable id: a
+   * broken room must lose you one menu click, not the whole game. */
+  function beginCampaign(roomId) {
+    wire();
+    var C = BAIT.Chapters;
+    var entry = C && C.byId && C.byId(roomId);
+    if (!entry) return false;
+
+    var room;
+    try { room = BAIT.Room.fromText(entry.lines, entry.params); }
+    catch (e) { return false; }
+    if (!room || (room.parseErrors && room.parseErrors.length)) return false;
+
+    room.id = entry.id;
+    room.name = entry.name || entry.id;
+    /* par is stamped onto the ENTRY at boot by Chapters.applyPar, so read it
+     * from there — a room freshly parsed from text has none. */
+    room.par = entry.par || null;
+
+    /* Your own best line, raced as a ghost, unless you have turned ghosts off. */
+    var ghost = null;
+    try {
+      var doc = BAIT.Save.read && BAIT.Save.read();
+      /* doc.campaign.rooms, NOT doc.rooms — Relay caught this reading the
+       * schema rather than the code. Wrong by one level is silent here: the
+       * lookup just yields undefined, no ghost attaches, and the feature is
+       * simply missing with nothing to grep for. */
+      var camp = doc && doc.campaign;
+      var rec = camp && camp.rooms && camp.rooms[roomId];
+      if (rec && rec.ghost && rec.ghost.rle &&
+          !(doc.settings && doc.settings.ghosts === false)) ghost = rec.ghost.rle;
+    } catch (e) { ghost = null; }
+
+    return begin(room, { origin: 'campaign', roomId: roomId, ghost: ghost });
+  }
+
   /* A fresh ATTEMPT: deaths back to zero, so Clean is on the table again.
    * This is what Results' "Restart" and Pause' "Restart" call. */
   function restart() {
@@ -144,6 +188,15 @@
     s.phase = 'dead';
     s.deaths++;
     s.deadFor = 0;
+
+    /* The gauntlet is the one mode where a death can be FINAL, and it owns
+     * that rule rather than this file: three lives are a property of the run,
+     * not of dying. So a caller may pass onDeath, and returning false means
+     * "that was the last one". The phase becomes 'out', which plays the exact
+     * same death beat and differs only in what the next input does — see the
+     * dead branch in tick(). Both hooks are absent everywhere else, so death
+     * in the campaign and the workshop costs one undefined check. */
+    if (s.opts.onDeath && s.opts.onDeath(s.deaths) === false) s.phase = 'out';
     if (Audio.play) Audio.play('death', s.state.deathCause);
     /* Hand Fx the cause and the place. It runs the hard cut, the half second
      * of real silence and the push-in — all of which any input cancels. */
@@ -162,13 +215,29 @@
      * only legal moment to build an AudioContext (Chrome blocks it earlier). */
     if (dir && !s.audioStarted) { s.audioStarted = true; if (Audio.init) Audio.init(); }
 
-    if (s.phase === 'dead') {
+    if (s.phase === 'dead' || s.phase === 'out') {
       s.deadFor++;
       /* Any direction retries instantly. This is deliberately checked BEFORE
        * the hold expires: an impatient player never waits for the replay.
        * Fx.abort() kills the push-in mid-frame so the beat is watchable but
-       * never sit-through-able. */
-      if (dir) { if (Fx.abort) Fx.abort(); retry(); }
+       * never sit-through-able.
+       *
+       * 'out' is the same beat with a different door at the end of it: the
+       * run is over, so the input that would have retried leaves instead.
+       * The player still gets to see what killed them, which is the whole
+       * point of the beat and is most needed on the death that ended a run. */
+      if (dir) {
+        if (Fx.abort) Fx.abort();
+        if (s.phase === 'out') {
+          /* retry() self-limits by putting the phase back to 'run'; 'out' has
+           * no such reset, so without this latch onExit fires on EVERY tick
+           * the player is still holding the key — measured, ~170 calls before
+           * the caller tears the session down. Whether that is harmless
+           * depends entirely on what the caller's handler does, which is not
+           * a thing this file gets to assume. Fire once. */
+          if (!s.exited) { s.exited = true; if (s.opts.onExit) s.opts.onExit(); }
+        } else retry();
+      }
       return;
     }
     if (s.phase !== 'run') return;
@@ -210,8 +279,12 @@
       sim: s.state,
       alpha: alpha,
       ghosts: s.ghost ? [s.ghost.state] : null,
-      mode: s.phase,
-      label: s.phase === 'dead' ? s.state.deathCause : null,
+      /* 'out' is a death like any other as far as the picture is concerned —
+       * Fx knows 'dead', and the callout naming what killed you matters MOST
+       * on the death that ended the run. Passing 'out' through would drop the
+       * cause on exactly the one death the player will want explained. */
+      mode: s.phase === 'out' ? 'dead' : s.phase,
+      label: (s.phase === 'dead' || s.phase === 'out') ? s.state.deathCause : null,
       sublabel: null
     }, nowMs);
 
@@ -235,7 +308,7 @@
   }
 
   BAIT.Play = {
-    begin: begin, tick: tick, render: render,
+    begin: begin, beginCampaign: beginCampaign, tick: tick, render: render,
     retry: retry, restart: restart, stop: stop,
     medals: medals,
     session: function () { return s; },

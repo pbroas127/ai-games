@@ -30,9 +30,11 @@ might be a lie is not a trap, it's noise.
 ## Three ways to play
 
 **Campaign** — hand-authored rooms across six chapters, each introducing
-pieces and then combining them. **Chapter 1, Ground Floor, is live now with 13
-rooms; chapters 2 to 6 are being authored and will land in later updates** —
-the chapter list shows them locked until then. Four medals per room: **Clear**, **Clean** (no
+pieces and then combining them. **Chapters 1 to 3 are live now — 39 rooms:
+Ground Floor, Cadence and Linkage. Chapters 4 to 6 are being authored and will
+land in later updates**, and the chapter list shows them locked until then. A
+chapter ships complete or not at all; a half-authored chapter reads as a short
+one, which is a worse lie than an honest lock. Four medals per room: **Clear**, **Clean** (no
 deaths), **Swift** (inside par), and **Token** (the optional collectible,
 which always sits on a worse line than the route you'd rather take). Later
 chapters unlock on medals, not on clears, so the back half is gated behind

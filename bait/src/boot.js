@@ -134,9 +134,30 @@
     });
   }
 
+  /* The rAF loop only paints during 'playing' and 'results'. In every other
+   * mode nothing touches the canvas, so it keeps whatever was last drawn — or
+   * raw black on a cold boot. Full-bleed opaque screens hide that, but the
+   * Workshop panel does not cover the viewport, so it appeared to float on a
+   * black void. Paint the backdrop ourselves whenever the sim is not running.
+   */
+  function paintBackdrop() {
+    try {
+      var c = document.getElementById('stage');
+      var g = c && c.getContext && c.getContext('2d');
+      if (!g) return;
+      var T = BAIT.Theme;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = (T && T.c && T.c.void) || '#12171b';
+      g.fillRect(0, 0, c.width, c.height);
+    } catch (e) { /* a backdrop must never be able to break routing */ }
+  }
+
   function route(snap) {
     var ui = document.getElementById('ui');
     var S = BAIT.Screens, H = BAIT.Hud;
+
+    if (snap.state !== 'playing' && snap.state !== 'results' &&
+        snap.state !== 'editor') paintBackdrop();
 
     /* An overlay wins the screen without disturbing what is under it — that
      * is the whole reason Modes keeps a stack rather than a single state. */

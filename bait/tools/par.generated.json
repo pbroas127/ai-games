@@ -128,5 +128,70 @@
     "time": 502,
     "deaths": 0,
     "rung": "tight"
+  },
+  "3-01": {
+    "time": 508,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-02": {
+    "time": 837,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-03": {
+    "time": 459,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-04": {
+    "time": 363,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-05": {
+    "time": 197,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-06": {
+    "time": 685,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-07": {
+    "time": 1405,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-08": {
+    "time": 545,
+    "deaths": 0,
+    "rung": "loose"
+  },
+  "3-09": {
+    "time": 396,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-10": {
+    "time": 573,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-11": {
+    "time": 1266,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-12": {
+    "time": 910,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "3-13": {
+    "time": 206,
+    "deaths": 0,
+    "rung": "tight"
   }
 }

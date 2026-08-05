@@ -506,13 +506,198 @@
     return (h ^ (h >>> 16)) >>> 0 || 1;
   }
 
-  /* Today's run state, read from the save. "One run per day" is client
+  /* ------------------------------------------------------ the run itself --
+   * The gauntlet is ONE continuous session: five rooms in order, THREE
+   * lives for the whole run. A death spends a life the moment it happens;
+   * running out ends the run where it stands. Progress is persisted under
+   * the seed in daily.history, so a reload on the same day RESUMES the
+   * run — it cannot re-roll it, and it cannot refund a spent life
+   * (deaths are written at death time and Save flushes on pagehide).
+   * One run per seed: a finished day only shows its result. Tomorrow is
+   * a new seed, so nothing ever needs clearing.
+   *
+   * Wiring (agreed with Boss and Frame in #bait build):
+   *   - Each room starts via Play.begin(room, {origin:'gauntlet', ...}).
+   *   - Clears arrive as the Modes 'results' transition; the slot only
+   *     advances there.
+   *   - Deaths arrive through opts.onDeath (deaths never cross Modes).
+   *     Returning false tells play.js the run is out of lives: the death
+   *     beat still plays, and the player's next input calls opts.onExit
+   *     instead of retrying. onExit routes to the gauntlet screen.
+   *
+   * Everything here is browser-side runtime and is reached only through
+   * play()/next(); generate() above stays a pure function of the seed.
+   */
+
+  var LIVES = 3;
+
+  var runSeed = 0;      // seed of the session being played right now
+  var runRooms = null;  // the five generated rooms, cached for the session
+  var awaiting = -1;    // slot we expect the next 'results' transition for
+  var subscribed = false;
+
+  function dayRec(seed) {
+    var h = BAIT.Save.get('daily.history') || {};
+    return h[String(seed)] || null;
+  }
+
+  /* Whole-run par: the share string's denominator. Null if any room
+   * lacks one — a partial par would lie. */
+  function parTotal(rooms) {
+    var t = 0;
+    for (var i = 0; i < rooms.length; i++) {
+      if (!rooms[i].par || rooms[i].par.ticks == null) return null;
+      t += rooms[i].par.ticks;
+    }
+    return t;
+  }
+
+  /* The read view Frame's screens render from. Never hands out the live
+   * save record. */
+  function view(seed, day) {
+    var st = !day || !day.started ? 'fresh' : (day.done ? 'done' : 'active');
+    var v = {
+      seed: seed,
+      dayNumber: dayNumber(seed),
+      state: st,
+      room: day ? Math.min((day.slot | 0) + 1, 5) : 1,
+      lives: day ? day.lives | 0 : LIVES,
+      cleared: day ? day.cleared | 0 : 0,
+      deaths: day ? day.deaths | 0 : 0,
+      ticks: day ? day.ticks | 0 : 0,
+      shareText: null
+    };
+    if (st === 'done' && BAIT.Share && BAIT.Share.gauntletString) {
+      v.shareText = BAIT.Share.gauntletString({
+        seed: seed, cleared: v.cleared, deaths: v.deaths,
+        ticks: v.ticks, parTicks: day.par == null ? null : day.par
+      });
+    }
+    return v;
+  }
+
+  function today() {
+    var s = todaySeed();
+    return view(s, dayRec(s));
+  }
+
+  function yesterday() {
+    var d = new Date();
+    d.setDate(d.getDate() - 1);
+    var s = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+    var day = dayRec(s);
+    return day ? view(s, day) : null;
+  }
+
+  /* Start today's run, or resume the active one. The ONE entry point for
+   * Frame's play button and the results screen's "Next room" alike —
+   * both mean "put me in the room the run says is next". Returns false
+   * when today is already done (one run per seed) or a room fails to
+   * start; Frame shows a status line rather than a dead click. */
+  function play() {
+    var seed = todaySeed();
+    var day = dayRec(seed);
+    if (day && day.done) return false;
+
+    if (runSeed !== seed || !runRooms) {
+      runRooms = generate(seed);
+      runSeed = seed;
+    }
+
+    if (!day) {
+      var par = parTotal(runRooms);
+      BAIT.Save.change(function (d) {
+        d.daily.history[String(seed)] = {
+          started: true, done: false, slot: 0, lives: LIVES,
+          cleared: 0, deaths: 0, ticks: 0, par: par, at: Date.now()
+        };
+      }, 'daily.history.' + seed);
+      day = dayRec(seed);
+    }
+
+    ensureSubscribed();
+    return beginRoom(day.slot | 0);
+  }
+
+  function beginRoom(slot) {
+    if (slot < 0 || slot > 4 || !runRooms) return false;
+    awaiting = slot;
+    return BAIT.Play.begin(runRooms[slot], {
+      origin: 'gauntlet',
+      roomId: runRooms[slot].id,
+      originCtx: { seed: runSeed },
+      onDeath: onRoomDeath,
+      onExit: onRunOut
+    });
+  }
+
+  /* Called synchronously by play.js the tick a death lands. Persist
+   * immediately: the debounce plus the pagehide flush means a reload can
+   * never refund the life. Returns false when the run is out — play.js
+   * then blocks the retry and routes input to onExit. */
+  function onRoomDeath() {
+    var out = false;
+    BAIT.Save.change(function (d) {
+      var day = d.daily.history[String(runSeed)];
+      if (!day || day.done) return;
+      day.deaths = (day.deaths | 0) + 1;
+      day.lives = Math.max(0, (day.lives | 0) - 1);
+      if (day.lives === 0) {
+        day.done = true;
+        day.at = Date.now();
+        out = true;
+      }
+    }, 'daily.history.' + runSeed);
+    if (out) {
+      awaiting = -1;
+      BAIT.Save.flush();   // the result must survive an immediate close
+    }
+    return !out;
+  }
+
+  /* The player's first input after the final death: leave the corpse,
+   * show the damage. */
+  function onRunOut() {
+    if (BAIT.Play && BAIT.Play.stop) BAIT.Play.stop();
+    BAIT.Modes.go('gauntlet', {});
+  }
+
+  /* Clears arrive here. Subscribed lazily on first play() — daily.js
+   * loads before modes.js, and a session that never plays the gauntlet
+   * never needs the subscription. */
+  function ensureSubscribed() {
+    if (subscribed || !BAIT.Modes) return;
+    subscribed = true;
+    BAIT.Modes.subscribe(function (snap) {
+      if (snap.state !== 'results' || awaiting < 0) return;
+      var ctx = snap.ctx || {};
+      if (ctx.origin !== 'gauntlet' || !ctx.summary) return;
+      var slot = awaiting;
+      awaiting = -1;   // one record per transition; overlay re-emits ignored
+      var finished = false;
+      BAIT.Save.change(function (d) {
+        var day = d.daily.history[String(runSeed)];
+        if (!day || day.done || (day.slot | 0) !== slot) return;
+        day.cleared = (day.cleared | 0) + 1;
+        day.ticks = (day.ticks | 0) + (ctx.summary.ticks | 0);
+        day.slot = slot + 1;
+        if (day.slot >= 5) {
+          day.done = true;
+          day.at = Date.now();
+          finished = true;
+        }
+      }, 'daily.history.' + runSeed);
+      if (finished) BAIT.Save.flush();
+    });
+  }
+
+  /* Today's run state, read from the save. Kept for older callers; the
+   * screens read today()/yesterday(). "One run per day" is client
    * honour-system only — there is no server to enforce it, so the UI's
-   * job is to make a replay obvious, not to pretend it is impossible. */
+   * job is to make that state obvious, not to pretend it is a wall. */
   function status(dateSeed) {
     if (!validSeed(dateSeed)) dateSeed = todaySeed();
-    var h = BAIT.Save.get('daily.history') || {};
-    var day = h[String(dateSeed)];
+    var day = dayRec(dateSeed);
     return {
       seed: dateSeed,
       dayNumber: dayNumber(dateSeed),
@@ -527,8 +712,13 @@
     todaySeed: todaySeed,
     dayNumber: dayNumber,
     validSeed: validSeed,
+    /* The run — contract agreed with Boss and Frame in #bait build. */
+    today: today,
+    yesterday: yesterday,
+    play: play,
+    next: play,     // the results screen's "Next room"; same resume logic
     status: status,
-    LIVES: 3,
+    LIVES: LIVES,
     /* verify.cjs reads this and walks every daily seed up to it; the
      * constant and the proof cannot quietly disagree. */
     VERIFIED_UNTIL: VERIFIED_UNTIL

@@ -124,7 +124,7 @@
       undo: [], redo: [],
       proved: false,
       rev: 0,
-      hint: '', hintTimer: null,
+      ghostNote: '',         // why a stored proof was rejected, shown on the gate
       authorGhost: null,     // {rle, ticks, at} — the winning run, kept as proof
       dirtySinceSave: false,
       issues: [],
@@ -198,25 +198,26 @@
     voidProof();
     ed.dirtySinceSave = true;
     revalidate();
-    scheduleHint();
     refresh();
     return true;
   }
 
-  /* The room changed, so the run that cleared it proved nothing about this
-   * room. The ghost goes with it: a ghost recorded against a different layout
-   * would walk through walls. */
   /* Ink's static-layer cache is keyed on room.rev, so an edit that does not
-   * bump it paints the OLD room forever. Same counter also discards a stale
-   * solve hint. */
+   * bump it paints the OLD room forever. */
   function bumpRev() {
     ed.room.rev = (ed.room.rev | 0) + 1;
     ed.rev = ed.room.rev;
   }
 
+  /* The room changed, so the run that cleared it proved nothing about this
+   * room. The ghost goes with it: a ghost recorded against a different layout
+   * would walk through walls. */
   function voidProof() {
     ed.proved = false;
     ed.authorGhost = null;
+    /* The note explained a ghost against the room as it was loaded. Once the
+     * author edits, it is answering a question nobody is asking any more. */
+    ed.ghostNote = '';
   }
 
   /* Room.start is a real field in Forge's shape, not derived, so it has to be
@@ -236,7 +237,7 @@
     restore(ed.room, ed.undo.pop());
     bumpRev();
     voidProof();
-    revalidate(); scheduleHint(); refresh();
+    revalidate(); refresh();
   }
 
   function redo() {
@@ -245,7 +246,7 @@
     restore(ed.room, ed.redo.pop());
     bumpRev();
     voidProof();
-    revalidate(); scheduleHint(); refresh();
+    revalidate(); refresh();
   }
 
   /* ------------------------------------------------------------ placement -- */
@@ -469,7 +470,37 @@
     Pl.begin(cloneRoom(ed.room), { origin: 'editor' });
   }
 
-  /* The single place `proved` becomes true. */
+  /* Replay a stored ghost against a room and say, in words, what happened.
+   *
+   * Replay.verify deliberately does not collapse to a boolean: a replay that
+   * runs out of inputs with the dot still alive is a different failure from
+   * one that died, and a corrupt string is different again. The author is
+   * being told why their saved proof was rejected, so keep the distinction.
+   *
+   * Any failure to reach a verdict is treated as NOT proved. This gate only
+   * ever fails closed. */
+  function replayVerdict(room, rle) {
+    var R = BAIT.Replay, S = BAIT.Sim;
+    if (!R || typeof R.verify !== 'function' || !S) {
+      return { cleared: false, why: 'could not be checked, the replay engine is not loaded' };
+    }
+    var res;
+    try { res = R.verify(cloneRoom(room), rle); }
+    catch (err) { return { cleared: false, why: 'could not be replayed' }; }
+    if (!res) return { cleared: false, why: 'could not be replayed' };
+
+    if (res.result === S.RESULT.CLEAR) return { cleared: true, why: '' };
+    if (res.result === 'invalid')      return { cleared: false, why: 'is corrupt' };
+    if (res.result === S.RESULT.DEAD) {
+      return { cleared: false, why: 'no longer survives this room' +
+               (res.deathCause ? ' (' + res.deathCause + ')' : '') };
+    }
+    return { cleared: false, why: 'no longer reaches the exit' };
+  }
+
+  /* The single place `proved` becomes true from a run the author just played.
+   * mount() can also set it, but ONLY after replayVerdict confirms the stored
+   * ghost still clears the room. Both routes require a real clear. */
   function takeResult(summary) {
     if (!ed) return;
     if (summary && (summary.cleared || (summary.medals && summary.medals.clear))) {
@@ -600,6 +631,7 @@
     var room = opts.room || (R && R.create ? R.create(K.GRID_W, K.GRID_H) : null);
     if (!room) return null;
 
+    resetComplaints();
     ed = freshState(room);
     ed.host = host;
     ed.onExit = opts.onExit || null;
@@ -610,8 +642,34 @@
     ed.ctx = ed.canvas && ed.canvas.getContext ? ed.canvas.getContext('2d') : null;
 
     /* A room reopened from the library was proved when it was published, and
-     * its author ghost is that proof. Re-proving it would be theatre. */
-    if (opts.authorGhost) { ed.authorGhost = opts.authorGhost; ed.proved = true; }
+     * its author ghost is that proof, so asking the author to clear it again
+     * would be theatre.
+     *
+     * But a ghost is only proof if it actually clears THIS room, and mount()
+     * is a public entry point. Trusting opts.authorGhost on sight meant any
+     * caller could hand over {rle:'x'} and unlock publish having cleared
+     * nothing, which is the exact thing this file exists to prevent. So the
+     * ghost is REPLAYED against the room through Forge's Replay.verify, which
+     * he wrote for this caller and which distinguishes a corrupt replay from
+     * one that simply did not clear.
+     *
+     * If it does not clear, publish stays locked and the gate line says why
+     * rather than leaving the author to guess (Boss's standing rule: if
+     * something does not happen, something has to say so). */
+    ed.ghostNote = '';
+    if (opts.authorGhost && opts.authorGhost.rle) {
+      var vr = replayVerdict(room, opts.authorGhost.rle);
+      if (vr.cleared) {
+        ed.authorGhost = opts.authorGhost;
+        ed.proved = true;
+      } else {
+        ed.ghostNote = 'The saved proof for this room ' + vr.why +
+                       ', so publish is locked until you clear it again.';
+      }
+    } else if (opts.authorGhost) {
+      ed.ghostNote = 'The saved proof for this room has no recorded run, ' +
+                     'so publish is locked until you clear it again.';
+    }
 
     syncStart(room);
     buildDom(host);
@@ -626,7 +684,6 @@
 
   function unmount() {
     if (!ed) return;
-    if (ed.hintTimer) clearTimeout(ed.hintTimer);
     unbindPointer();
     unbindKeys();
     if (ed.unsubModes) ed.unsubModes();
@@ -736,8 +793,6 @@
     var gate = el('div', 'ed-gate stack gap-s');
     var gateMsg = text('p', 'small', '');
     gate.appendChild(gateMsg);
-    var gateHint = text('p', 'small dim', '');
-    gate.appendChild(gateHint);
     var gateRow = el('div', 'row gap-s');
     var bTest = button('btn ed-test', 'TEST', test);
     var bPub  = button('btn btn--primary ed-publish', 'PUBLISH', publish);
@@ -755,7 +810,6 @@
     ed.els = {
       bar: bar, rail: rail, budget: budget, budgetVal: budgetVal,
       inspector: inspector, issues: issues, gate: gate, gateMsg: gateMsg,
-      hint: gateHint,
       swatches: swatches, name: nameInput, live: live,
       test: bTest, publish: bPub, undo: bUndo, redo: bRedo
     };
@@ -800,7 +854,12 @@
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, SWATCH_PX, SWATCH_PX);
     try { D.piece(g, id, pendingParams(id), 0, 0, SWATCH_PX); }
-    catch (err) { /* a swatch that will not draw must not break the rail */ }
+    catch (err) {
+      /* A blank swatch is survivable, but the author is looking at a piece
+       * they cannot identify and nothing else would ever tell them why. */
+      complain('swatch-' + id, 'Piece ' + id + ' has no picture: ' +
+               ((err && err.message) || err));
+    }
   }
 
 
@@ -859,60 +918,51 @@
     redraw();
   }
 
-  /* ---------------------------------------------------------- solve hint --
-   * ADVISORY ONLY, and it must stay that way. The prove-gate proves a HUMAN
-   * cleared the room, and that is the gate. This just stops an author staring
-   * at a room that has no route at all with no idea why they cannot clear it.
+  /* ------------------------------------------- why there is no solve hint --
+   * There WAS an advisory "this room may have no route" line here, driven by
+   * BAIT.Solve while the author drew. It is gone on purpose. Do not put it
+   * back without reading this, because the reason is measured, not a hunch.
    *
-   * A "no route found" is never proof of anything: the search is bounded and
-   * gives up, so the wording says so rather than accusing the room. It NEVER
-   * disables a button.
+   * Solve has no wall clock by design (Sieve's call, and the right one: a
+   * node budget makes the verdict a pure function of the room, so CI and a
+   * laptop agree). But that means a search cannot be capped in TIME, only in
+   * nodes, and search() is one synchronous call that cannot be sliced across
+   * idle callbacks. Workers are blocked on file://, so there is no thread to
+   * put it on. Whatever it costs, it costs with the UI frozen.
    *
-   * Cost control: it waits for editing to settle, takes a small slice during
-   * idle time, and a result computed against an older revision is thrown away
-   * rather than shown against the room you have since changed.
+   * Measured against the real solver, on the rooms this would fire on:
+   *
+   *   empty room, solvable       ~46 ms   solved
+   *   busy room, solvable       ~130 ms   solved
+   *   sealed exit, UNSOLVABLE   ~158 ms   BUDGET  (says nothing about the room)
+   *   sealed exit, UNSOLVABLE  ~1500 ms   EXHAUSTED (the only honest verdict)
+   *
+   * The cost runs backwards to the usefulness. A room that is fine answers
+   * quickly and has nothing to tell the author. A room that is broken is the
+   * expensive one, and the only status worth showing is EXHAUSTED, which on
+   * that room costs a second and a half of frozen editor. Cut the budget to
+   * where the freeze is tolerable and every answer comes back BUDGET, which
+   * by the solver's own contract means NOTHING about the room — so the line
+   * would be a claim we are never entitled to make, bought with dropped
+   * frames while somebody is dragging out a wall.
+   *
+   * There is no setting of that dial that is both honest and smooth. The
+   * prove-gate never depended on this: an author cannot publish without
+   * clearing the room themselves, which is a stronger check than any hint.
+   * If this comes back it belongs on an explicit "CHECK THIS ROOM" button
+   * where the author has asked for the wait, not on the edit path.
    */
-  var HINT_DELAY = 500;    // ms of quiet before we bother
-  var HINT_MS = 25;        // search slice; small enough not to drop a frame
-
-  function scheduleHint() {
-    if (!ed) return;
-    if (ed.hintTimer) clearTimeout(ed.hintTimer);
-    ed.hint = '';
-    ed.hintTimer = setTimeout(function () {
-      ed.hintTimer = null;
-      idle(runHint);
-    }, HINT_DELAY);
-  }
-
-  function idle(fn) {
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(fn, { timeout: 1000 });
-    else setTimeout(fn, 0);
-  }
-
-  function runHint() {
-    if (!ed) return;
-    var S = BAIT.Solve;
-    if (!S || typeof S.solve !== 'function') return;   // not built yet
-    if (!canTest() || ed.proved) return;               // nothing useful to say
-
-    var rev = ed.rev, res;
-    try {
-      res = S.solve(cloneRoom(ed.room), {
-        maxTicks: K.MAX_TICKS, maxNodes: 40000, maxMs: HINT_MS
-      });
-    } catch (err) {
-      return;                                          // advisory: stay silent
-    }
-    if (!ed || ed.rev !== rev) return;                 // room moved on, discard
-    ed.hint = res ? '' : 'No route found in a quick search. Might be unsolvable, might just be tight.';
-    if (ed.els.hint) ed.els.hint.textContent = ed.hint;
-  }
 
   function gateLine() {
+    /* A renderer that will not paint outranks anything about publishing. */
+    var broken = complaintLine();
+    if (broken) return broken;
     var b = blockers();
     if (b.length) return b[0].msg;
     if (ed.issues.length) return ed.issues[0].msg;
+    /* A rejected saved proof outranks the generic prompt: "clear this room"
+     * does not explain why a room you already published came back locked. */
+    if (!ed.proved && ed.ghostNote) return ed.ghostNote;
     if (!ed.proved) return 'Clear this room yourself to unlock publish.';
     if (!ed.authorGhost) return 'That run was not recorded. Test it again.';
     return 'Proved. Ready to publish.';
@@ -1258,12 +1308,62 @@
     if (!ed) return;
     if (!editing()) return;      /* a test run is on screen, not the editor */
     var D = BAIT.Draw;
-    if (D && typeof D.render === 'function') {
+    if (!D || typeof D.render !== 'function') {
+      complain('draw-missing', 'The renderer is not loaded, so the board cannot paint.');
+    } else {
       try {
         D.render({ room: ed.room, sim: null, alpha: 0, mode: 'editor' });
-      } catch (err) { /* never let a paint failure take the editor down */ }
+        clearComplaint('draw-missing');
+        clearComplaint('draw-threw');
+      } catch (err) {
+        /* A paint failure must not take the editor down, but it must not be
+         * invisible either. Swallowing this is how the board went black for
+         * hours with nothing anywhere saying the renderer had thrown. */
+        complain('draw-threw', 'The board could not be drawn: ' +
+                 ((err && err.message) || err) + '. Your room is safe, the picture is not.');
+      }
     }
     drawOverlay();
+  }
+
+  /* ------------------------------------------------------ saying so out loud --
+   * Boss's standing rule: if something does not happen, something must say so.
+   * A throw that scrolls past the console is not something saying so, and a
+   * message repeated every repaint is noise nobody reads. So each distinct
+   * problem is reported ONCE to the console and held on screen until it stops
+   * being true. */
+  var complaints = {};
+
+  /* Module-level, so without this a complaint raised by one editor session
+   * outlives it and is shown against the next room, which is its own kind of
+   * lie. mount() calls this before anything can paint. */
+  function resetComplaints() { complaints = {}; }
+
+  function complain(key, msg) {
+    if (complaints[key] === msg) return;      /* already saying exactly this */
+    complaints[key] = msg;
+    if (typeof console !== 'undefined' && console.warn) console.warn('BAIT editor: ' + msg);
+    showComplaints();
+  }
+
+  function clearComplaint(key) {
+    if (!(key in complaints)) return;
+    delete complaints[key];
+    showComplaints();
+  }
+
+  /* Writes straight to the element rather than calling refresh(). refresh()
+   * ends in redraw(), and redraw() is what raises these, so routing a
+   * complaint through it would recurse. */
+  function showComplaints() {
+    if (!ed || !ed.els || !ed.els.gateMsg) return;
+    var line = complaintLine();
+    if (line) ed.els.gateMsg.textContent = line;
+  }
+
+  function complaintLine() {
+    for (var k in complaints) if (complaints.hasOwnProperty(k)) return complaints[k];
+    return '';
   }
 
   function drawOverlay() {
