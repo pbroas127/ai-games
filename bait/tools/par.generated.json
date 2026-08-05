@@ -110,7 +110,7 @@
     "rung": "tight"
   },
   "2-10": {
-    "time": 475,
+    "time": 627,
     "deaths": 0,
     "rung": "tight"
   },
@@ -191,6 +191,31 @@
   },
   "3-13": {
     "time": 206,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "4-01": {
+    "time": 1043,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "4-02": {
+    "time": 435,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "6-01": {
+    "time": 1627,
+    "deaths": 0,
+    "rung": "greedy"
+  },
+  "6-02": {
+    "time": 977,
+    "deaths": 0,
+    "rung": "tight"
+  },
+  "6-03": {
+    "time": 829,
     "deaths": 0,
     "rung": "tight"
   }

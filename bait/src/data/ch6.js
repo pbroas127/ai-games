@@ -227,7 +227,198 @@
        '#................GE#',
        '####################'],
       { '12,9':  { link: 1, mode: 1 },
-        '17,12': { link: 1 } })
+        '17,12': { link: 1 } }),
+
+    /* ------------------------------------------------------------------ 6-06
+     * A MIMIC IN A ROTOR PLAZA. The rotor sits dead centre with a five-cell
+     * arm, and the four things this room contains are sitting on the four
+     * places that arm reaches: the corridor you walk in through, the token,
+     * the teleport that leaves, and the mimic. Every doorway in the room is a
+     * swept cell. The corners are the only rest you get.
+     *
+     * ON THE MIMIC BEING FAIR. This is 5-04's contract and 6-01's: the door
+     * the room MADE you earn is the real one, the door that is simply lying
+     * open is the lie. The way out is the teleport at the east tip, which
+     * costs you a beam window to touch and drops you in a sealed pocket with
+     * the real exit. The mimic is at the south tip, one cell past the plaza
+     * edge, exactly where a player running for the nearest gap will find it.
+     * Verifying that costs a full sweep, because the two candidates are on
+     * opposite arms and you cannot look at both from one safe corner.
+     *
+     * (Atlas: I read "verifying costs a full sweep" as the tell being a lap,
+     * not as touching a door to test it. A test-by-touch is a coin flip with
+     * death on one side and I will not build one. Say the word if you meant
+     * something else and I will rebuild this room.)
+     *
+     * The four blocks in the quadrants keep the plaza from being an empty
+     * field: the ring and the two axes are the only ways across, so crossing
+     * an arm is a decision rather than a stroll. The token is at the north
+     * tip, which is the arm furthest from the way out. */
+    R('6-06', 'SECOND OPINION',
+      'Every door in the room sits at the tip of the beam.',
+      'One of the two doors is the exit. The one you did not work for is not.',
+      ['####################',
+       '#########o##########',
+       '#####.........######',
+       '#####.##...##.######',
+       '#####.##...##.######',
+       '#####.........######',
+       '#S.......R....W#####',
+       '#####.........######',
+       '#####.##...##.######',
+       '#####.##...##.######',
+       '#####.........######',
+       '#########M##########',
+       '################W.E#',
+       '####################'],
+      { '9,6':   { period: 6, phase: 0, len: 5 },
+        '14,6':  { link: 1 },
+        '16,12': { link: 1 } }),
+
+    /* ------------------------------------------------------------------ 6-07
+     * PHASE GATES OVER A CLOSED BELT. Every floor cell in this room except the
+     * one you start on is a conveyor, and they are wired into one clockwise
+     * loop around a solid block. That is the whole idea: there is no cell in
+     * the room where your speed is zero. Walk with the belt and you make
+     * 3px/tick, hold nothing and you drift at 1, walk against it and you crawl
+     * back at 1. Nothing you can press stops you.
+     *
+     * So you are never permitted to wait at the door. The exit gate at (9,2)
+     * opens on a ten-beat cycle and the belt under the mouth of it is running
+     * EAST, away from where you came from. Arrive early and it carries you
+     * past; the only way back to the mouth is to crawl upstream at a third of
+     * your walking speed, or give up and take the whole loop again. Overshoot
+     * is the punishment this room deals in.
+     *
+     * The two plugs on the loop itself are not there to block you, they are
+     * there to stop the belt from being a free ride. Pinned against a shut
+     * plug you are not resting, you are queuing: the moment it opens the belt
+     * feeds you into it at 1px/tick, and standing inside one when it shuts is
+     * a crush, not a shove.
+     *
+     * The token gate at (9,11) runs on the same ten beats at the opposite
+     * parity, so it is shut whenever the exit gate is open. You cannot take
+     * both on one pass, and a mistimed grab seals you in the pocket for a full
+     * cycle while the clock runs. That is the strictly worse line, and it is
+     * worth about a lap. */
+    R('6-07', 'NO BRAKES',
+      'A closed belt loop. There is no cell in this room where you stand still.',
+      'Overshoot the door and the floor carries you all the way round again.',
+      ['####################',
+       '#CCCCCCCCCCCCC%CCC!#',
+       '#I#######%########!#',
+       '#I#######E########!#',
+       '#I################!#',
+       '#I################!#',
+       '#S################!#',
+       '#I################!#',
+       '#I################!#',
+       '#I################!#',
+       '#I#######o########!#',
+       '#I#######%########!#',
+       '#IJJJ%JJJJJJJJJJJJJ#',
+       '####################'],
+      { '14,1':  { period: 6,  phase: 0 },
+        '5,12':  { period: 6,  phase: 1 },
+        '9,2':   { period: 10, phase: 1 },
+        '9,11':  { period: 10, phase: 0 } }),
+
+    /* ------------------------------------------------------------------ 6-08
+     * THE LONG ROOM. One corridor that crosses the screen three times, and
+     * each crossing is a different problem laid on top of the same one: a
+     * turret firing head-on down the whole length of the lane you are in.
+     *
+     * You cannot outrun a bullet and the lanes are sixteen cells, so each lane
+     * has alcoves. What makes this the long room is that the alcoves are not
+     * safe: every one of them is the north arm of a one-cell rotor buried in
+     * the wall beneath it, so a shelter is only shelter for three beats in
+     * four. There is no cell on the route where both clocks are stopped, which
+     * is the brief for this room stated exactly.
+     *
+     * Rotor arms are one cell long on purpose. A long arm in a corridor this
+     * tight would be a wall of red, and 1-04 is the density reference: what
+     * makes this hard is that two cheap cadences overlap, not that there is
+     * more of anything.
+     *
+     * The turret cadence eases off as you descend, 18, 18, 17, because the
+     * alcove spacing tightens and the lanes get busier. The token hangs in a
+     * two-cell spur off the middle lane, in the EAST arm of the rotor at
+     * (8,4), so the grab is timed against a clock you were not watching. */
+    R('6-08', 'THE LONG WAY',
+      'Three crossings, three turrets, and every shelter is on a clock too.',
+      'Nowhere on the route are both clocks stopped at the same time.',
+      ['####################',
+       '####################',
+       '#S................T#',
+       '####.###.###.##.#.##',
+       '####R###Ro##R##R#.##',
+       '#########.#######.##',
+       '#T................##',
+       '##.#.##.###.###.####',
+       '##.#R##R###R###R####',
+       '##.#################',
+       '##................T#',
+       '#####.###.###.###E##',
+       '#####R###R###R######',
+       '####################'],
+      { '18,2':  { dir: 7, period: 18, phase: 0 },
+        '1,6':   { dir: 3, period: 18, phase: 0 },
+        '18,10': { dir: 7, period: 17, phase: 0 },
+        '4,4':   { period: 5, phase: 0, len: 1 },
+        '8,4':   { period: 5, phase: 1, len: 1 },
+        '12,4':  { period: 5, phase: 2, len: 1 },
+        '15,4':  { period: 5, phase: 3, len: 1 },
+        '4,8':   { period: 4, phase: 2, len: 1 },
+        '7,8':   { period: 4, phase: 0, len: 1 },
+        '11,8':  { period: 4, phase: 3, len: 1 },
+        '15,8':  { period: 4, phase: 1, len: 1 },
+        '5,12':  { period: 6, phase: 0, len: 1 },
+        '9,12':  { period: 6, phase: 2, len: 1 },
+        '13,12': { period: 6, phase: 1, len: 1 } }),
+
+    /* ------------------------------------------------------------------ 6-09
+     * A FALLER LATTICE INSIDE A TURRET GALLERY. Nine chambers in a three by
+     * three grid, and every door between them is a single faller. A faller
+     * holds you once and is a hole the moment you step off it, so every door
+     * in this room is consumed by the act of walking through it. That is the
+     * brief: every safe tile is spent at the moment you use it.
+     *
+     * There are twelve doors and you need four of them, so the room is not
+     * about finding THE route, it is about not spending a door you still
+     * needed. Walk into a chamber whose remaining doors you have already
+     * burnt and the room is over with nothing on screen having killed you,
+     * which is why the doors are laid out on a plain grid: the map has to be
+     * readable at a glance or that death is not legible.
+     *
+     * The three turrets sit in the border wall and each one fires the full
+     * width of the room, straight through the door line of its chamber row.
+     * Chambers are three and four cells tall, so there is always a row above
+     * or below the shot to stand in. The six horizontal doors sit ON the
+     * firing lines and the six vertical doors do not, so which door you spend
+     * decides whether you spend it under fire.
+     *
+     * The token is in the bottom-left chamber, which has two doors and is on
+     * nobody's shortest line. */
+    R('6-09', 'TWELVE DOORS',
+      'Every door is a faller, so every door you use is a door you destroy.',
+      'You need four of the twelve, and the room will not tell you which four.',
+      ['####################',
+       '#S....#.....#......#',
+       'T.....f.....f......#',
+       '#.....#.....#......#',
+       '###f#####f#####f####',
+       '#.....#.....#......#',
+       '#.....f.....f......T',
+       '#.....#.....#......#',
+       '###f#####f#####f####',
+       '#.....#.....#......#',
+       'T.....f.....f......#',
+       '#..o..#.....#......#',
+       '#.....#.....#.....E#',
+       '####################'],
+      { '0,2':  { dir: 3, period: 14, phase: 0 },
+        '19,6': { dir: 7, period: 12, phase: 0 },
+        '0,10': { dir: 3, period: 16, phase: 0 } })
 
   ]);
 
