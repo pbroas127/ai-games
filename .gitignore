@@ -1,0 +1,6 @@
+# Scraped reference material — analysis inputs only, kept local.
+# Contains third-party video transcripts and metadata; not redistributed.
+_research/
+
+# Local test harness
+script-generator/_test.js
