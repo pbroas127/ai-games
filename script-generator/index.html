@@ -66,7 +66,15 @@
   tr:last-child td { border-bottom:0; }
   td.t { font-family:'Consolas',monospace; color:#ffb524; font-weight:700; white-space:nowrap; width:62px; }
   td.sec { font-size:10.5px; letter-spacing:.8px; color:rgba(255,255,255,.42); text-transform:uppercase; white-space:nowrap; width:96px; }
-  td.prod { color:rgba(255,255,255,.62); font-size:12.5px; width:32%; }
+  td.prod { color:rgba(255,255,255,.62); font-size:12.5px; width:26%; }
+  td.sec b { color:rgba(255,255,255,.85); font-size:11.5px; letter-spacing:.9px; }
+  .where { display:block; margin-top:5px; font-size:10.5px; letter-spacing:0; text-transform:none; color:rgba(255,255,255,.38); line-height:1.45; }
+  .job { color:#fff; font-weight:600; font-size:13.5px; margin-bottom:8px; }
+  ul.must { list-style:none; margin:0 0 8px; }
+  ul.must li { position:relative; padding-left:16px; margin-bottom:5px; font-size:13px; color:rgba(255,255,255,.8); line-height:1.5; }
+  ul.must li:before { content:"▸"; position:absolute; left:0; color:#ffb524; }
+  .avoid { font-size:12px; color:#ff9d9d; line-height:1.5; }
+  .avoid b { color:#ff7676; }
   .mus { display:inline-block; margin-top:6px; font-size:10.5px; letter-spacing:.6px; color:#7dd3a0;
     border:1px solid rgba(125,211,160,.3); border-radius:5px; padding:2px 6px; }
   .mus.out { color:#ff8b8b; border-color:rgba(255,139,139,.3); }
@@ -82,9 +90,11 @@
 <div class="wrap">
   <a class="back" href="../">&#8592; Peter's AI Arcade</a>
   <h1>AI VIDEO <span>SCRIPT GENERATOR</span></h1>
-  <p class="sub">Beat timings, pacing, and b-roll cadence are derived from structural metadata scraped
-  from top-performing videos in this genre &mdash; chapter markers, silence-gap frequency, and words-per-minute.
-  Pick a format, pick your models, and it lays out a timestamped script next to a production log.</p>
+  <p class="sub">Beat timings and b-roll cadence come from structural metadata of top performers in this genre &mdash;
+  chapter distributions, silence-gap frequency, delivery pace. It doesn't write your dialogue. It tells you
+  <b>where you are in the video, what each beat has to accomplish, and the specific things you have to hit</b>
+  for the exact thing you're building &mdash; a Rocket League clone gets judged on ball physics, a FNAF clone on
+  whether anything is on a timer.</p>
 
   <div class="panel">
     <h2>1 &middot; Format</h2>
@@ -118,7 +128,7 @@
 
   <div id="out">
     <div class="panel">
-      <h2>Pacing check</h2>
+      <h2>Shape of this video</h2>
       <div class="stats" id="stats"></div>
       <div id="lint"></div>
     </div>
@@ -133,10 +143,10 @@
     </div>
 
     <div class="panel">
-      <h2>Script &amp; production log</h2>
+      <h2>Beat sheet &amp; production log</h2>
       <div class="tblwrap">
         <table>
-          <thead><tr><th>Time</th><th>Section</th><th>What you say</th><th>On screen / music / capture</th></tr></thead>
+          <thead><tr><th>Time</th><th>Where you are</th><th>What this beat has to do</th><th>On screen / music</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
@@ -199,15 +209,14 @@
 
     $('stats').innerHTML = `
       <div class="stat"><b>${mmss(r.total)}</b><small>runtime</small></div>
-      <div class="stat"><b>${r.scriptWords}</b><small>script words</small></div>
-      <div class="stat"><b>${mmss(r.spokenSec)}</b><small>VO at ${PACE_WPM} wpm</small></div>
-      <div class="stat"><b>${Math.round(r.spokenSec / r.total * 100)}%</b><small>talk density</small></div>
-      <div class="stat"><b>${r.targetGaps}</b><small>b-roll beats to hit</small></div>`;
+      <div class="stat"><b>${r.beats}</b><small>beats to hit</small></div>
+      <div class="stat"><b>${r.targetGaps}</b><small>b-roll cuts (~${GAP_PER_MIN}/min)</small></div>
+      <div class="stat"><b>${PACE_WPM}</b><small>target wpm</small></div>
+      <div class="stat"><b>${r.spec.genre}</b><small>genre read</small></div>`;
 
-    const hits = lint(r.rows);
-    $('lint').innerHTML = hits.length
-      ? `<div class="warn"><b>Machine-sounding phrases found:</b> ${hits.join(', ')} &mdash; rewrite these.</div>`
-      : `<div class="warn ok">No filler phrases detected. Read it out loud anyway &mdash; if a line is hard to say, cut it.</div>`;
+    $('lint').innerHTML =
+      `<div class="warn ok"><b>Judging ${$('target').value.trim() || 'this build'} on:</b> ${r.spec.crux.join(' &middot; ')}.
+       Watch for it falling back to ${r.spec.cheap}.</div>`;
 
     $('titles').innerHTML = r.titles.map(t => `<div>${t}</div>`).join('');
     $('tags').textContent = r.tags.join(', ');
@@ -217,8 +226,12 @@
       const outCue = /OUT|DUCK/.test(x.music);
       return `<tr>
         <td class="t">${mmss(x.t)}</td>
-        <td class="sec">${x.section}</td>
-        <td>${x.script}</td>
+        <td class="sec"><b>${x.section}</b><br><span class="where">${x.where}</span></td>
+        <td>
+          <div class="job">${x.job}</div>
+          <ul class="must">${x.must.map(m => `<li>${m}</li>`).join('')}</ul>
+          <div class="avoid"><b>Don't:</b> ${x.avoid}</div>
+        </td>
         <td class="prod">${x.prod}<br><span class="mus ${outCue ? 'out' : ''}">${x.music}</span></td>
       </tr>`;
     }).join('');
@@ -237,8 +250,12 @@
     const md = `# ${r.titles[0]}\n\n**Format:** ${FORMATS[cfg.format].label} · **Runtime:** ${mmss(r.total)} · **Seed:** ${cfg.seed}\n\n`
       + `## Titles\n${r.titles.map(t => `- ${t}`).join('\n')}\n\n`
       + `## Tags\n${r.tags.join(', ')}\n\n## Description\n${r.desc}\n\n`
-      + `## Script\n\n| Time | Section | Say | Production |\n|---|---|---|---|\n`
-      + r.rows.map(x => `| ${mmss(x.t)} | ${x.section} | ${x.script.replace(/\|/g, '\\|')} | ${x.prod.replace(/\|/g, '\\|')} — ${x.music} |`).join('\n');
+      + `## Judged on\n${r.spec.crux.map(c => `- ${c}`).join('\n')}\n\n## Beat sheet\n\n`
+      + r.rows.map(x =>
+          `### ${mmss(x.t)} — ${x.section}\n_${x.where}_\n\n**${x.job}**\n\n`
+          + x.must.map(m => `- ${m}`).join('\n')
+          + `\n\n> Don't: ${x.avoid}\n\n\`${x.prod} · ${x.music}\`\n`
+        ).join('\n');
     const b = new Blob([md], { type: 'text/markdown' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b);
